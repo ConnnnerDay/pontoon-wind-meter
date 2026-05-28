@@ -79,6 +79,7 @@ _lock  = threading.Lock()
 _state = {
     "wind": None, "gust": None, "wdir": "---",
     "age": None, "wtmp": None, "wvht": None,
+    "gust_history": [],          # most-recent-first list of up to 6 gust readings
     "alerts": [], "error": None,
 }
 
@@ -117,6 +118,29 @@ def _draw_status_badge(d, y, msg, frame):
     bh = 30
     d.rounded_rectangle([bx, y, bx + bw, y + bh], radius=6, fill=bg, outline=accent, width=2)
     d.text((device.width // 2, y + bh // 2), msg, fill="white", font=font_status, anchor="mm")
+
+
+def _trend(history):
+    """Return 'up', 'down', or 'steady' from a most-recent-first gust list, or None."""
+    if len(history) < 4:
+        return None
+    delta = history[0] - history[3]   # newest vs 15 min ago
+    if delta >  1.5: return "up"
+    if delta < -1.5: return "down"
+    return "steady"
+
+
+def _draw_trend(d, cx, y, trend):
+    """9 px tall directional indicator centred at (cx, y)."""
+    if trend == "up":
+        # Upward triangle — wind increasing (warm amber warning)
+        d.polygon([(cx, y), (cx - 4, y + 8), (cx + 4, y + 8)], fill=(240, 130, 0))
+    elif trend == "down":
+        # Downward triangle — wind easing (cool blue)
+        d.polygon([(cx, y + 8), (cx - 4, y), (cx + 4, y)], fill=(0, 145, 200))
+    else:
+        # Steady — horizontal dash
+        d.line([(cx - 5, y + 4), (cx + 5, y + 4)], fill=(85, 85, 85), width=2)
 
 
 def _draw_speed_lines(d, cx, cy, r):
@@ -224,6 +248,10 @@ def _draw_alert_strip(d, alerts, frame, status_color):
     if not alerts:
         wave_color = tuple(max(0, c // 4) for c in status_color)
         _draw_marine_wave(d, frame, wave_color)
+        # Overlay local time dimly on the wave
+        time_str = time.strftime("%H:%M")
+        d.text((device.width // 2, 231), time_str,
+               fill=(62, 62, 62), font=font_label, anchor="mm")
         return
 
     idx = (frame // (FRAME_RATE * 4)) % len(alerts)   # new alert every 4 s
@@ -311,13 +339,14 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame):
 
 
 def render_display(state, frame, needle_gust):
-    wind   = state["wind"]
-    gust   = state["gust"]
-    wdir   = state["wdir"]
-    age    = state["age"]
-    wtmp   = state["wtmp"]
-    wvht   = state["wvht"]
-    alerts = state["alerts"]
+    wind    = state["wind"]
+    gust    = state["gust"]
+    wdir    = state["wdir"]
+    age     = state["age"]
+    wtmp    = state["wtmp"]
+    wvht    = state["wvht"]
+    alerts  = state["alerts"]
+    history = state.get("gust_history", [])
 
     msg    = ("GOOD" if gust < GOOD_MPH
               else "CAUTION" if gust <= CAUTION_MPH
@@ -327,11 +356,19 @@ def render_display(state, frame, needle_gust):
     img, d = make_image()
     cx, cy, r = 160, 205, 112
 
-    draw_centered(d, 5,  "PONTOON WIND",              (160, 160, 160), font_title)
+    draw_centered(d, 5,  "PONTOON WIND",         (160, 160, 160), font_title)
     _draw_status_badge(d, 23, msg, frame)
-    # Gust value colored in the status accent; wind speed in neutral white
-    draw_centered(d, 58, f"Gust  {gust:.1f} mph",     accent, font_data)
-    draw_centered(d, 75, f"Wind  {wind:.1f} mph",      "white", font_data)
+
+    # Gust: colored in status accent, with trend indicator to its right
+    gust_str = f"Gust  {gust:.1f} mph"
+    gtw = int(d.textlength(gust_str, font=font_data))
+    gx  = (device.width - gtw) // 2
+    d.text((gx, 58), gust_str, fill=accent, font=font_data)
+    trend = _trend(history)
+    if trend is not None:
+        _draw_trend(d, gx + gtw + 9, 59, trend)
+
+    draw_centered(d, 75, f"Wind  {wind:.1f} mph", "white", font_data)
     _draw_compass(d, 285, 75, 11, wdir)
     _draw_marine_data(d, wtmp, wvht)
 
@@ -422,8 +459,10 @@ def _data_loop():
             wtmp = celsius_to_f(float(wtmp_raw)) if wtmp_raw != "MM" else None
             wvht = m_to_ft(float(wvht_raw))      if wvht_raw != "MM" else None
             with _lock:
+                new_history = [gust] + _state["gust_history"][:5]
                 _state.update(wind=wind, gust=gust, wdir=wdir, age=age,
-                              wtmp=wtmp, wvht=wvht, error=None)
+                              wtmp=wtmp, wvht=wvht,
+                              gust_history=new_history, error=None)
             logging.info("wind=%.1f mph gust=%.1f mph dir=%s age=%sm wtmp=%s wvht=%s",
                          wind, gust, wdir, age,
                          f"{wtmp:.1f}°F" if wtmp is not None else "MM",
@@ -465,8 +504,9 @@ def main():
         t0 = time.monotonic()
 
         with _lock:
-            snap           = dict(_state)
-            snap["alerts"] = list(_state["alerts"])
+            snap                  = dict(_state)
+            snap["alerts"]        = list(_state["alerts"])
+            snap["gust_history"]  = list(_state["gust_history"])
 
         if snap["wind"] is not None:
             # Exponential approach: close 35 % of remaining gap each frame
