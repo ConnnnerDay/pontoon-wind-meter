@@ -332,12 +332,12 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
         ly = int(cy + label_r * math.sin(ang))
         d.text((lx, ly), label, fill=(230, 230, 230), font=font_gauge, anchor="mm")
 
-    # Large gust value in the center
+    # Large gust value in the center — positioned to clear the hub ring (cy±11)
     if stale:
-        d.text((cx, cy), "STALE", fill=(80, 80, 80), font=font_status, anchor="mm")
+        d.text((cx, cy - 15), "STALE", fill=(80, 80, 80), font=font_status, anchor="mm")
     else:
-        d.text((cx, cy - 6), f"{actual_gust:.1f}", fill=(240, 240, 240), font=font_big, anchor="mm")
-        d.text((cx, cy + 20), "mph gust", fill=(140, 140, 140), font=font_label, anchor="mm")
+        d.text((cx, cy - 22), f"{actual_gust:.1f}", fill=(240, 240, 240), font=font_big, anchor="mm")
+        d.text((cx, cy + 22), "mph gust", fill=(140, 140, 140), font=font_label, anchor="mm")
 
     # Kite-shaped needle
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
