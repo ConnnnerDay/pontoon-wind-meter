@@ -1,11 +1,14 @@
 from luma.core.interface.serial import spi
 from luma.lcd.device import ili9341
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from urllib.request import urlopen
 import logging
 import math
+import signal
 import sys
 import time
+
+from ndbc import ms_to_mph, wind_direction, parse_ndbc, obs_age_minutes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -14,8 +17,26 @@ URL = "https://www.ndbc.noaa.gov/data/realtime2/41038.txt"
 GAUGE_MAX = 25      # mph
 GOOD_MPH = 12
 CAUTION_MPH = 18
+STALE_MINUTES = 90  # warn when observation is older than this
 
-COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",  # Arch / some Pis
+]
+
+def _load_font(size):
+    for path in _FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+font_title  = _load_font(14)
+font_status = _load_font(22)
+font_data   = _load_font(13)
+font_label  = _load_font(11)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -25,13 +46,14 @@ except Exception as e:
     sys.exit(1)
 
 
-def ms_to_mph(ms):
-    return ms * 2.23694
-
-
 def make_image():
     img = Image.new("RGB", device.size, "black")
     return img, ImageDraw.Draw(img)
+
+
+def draw_centered(d, y, text, fill, font):
+    w = d.textlength(text, font=font)
+    d.text(((device.width - w) // 2, y), text, fill=fill, font=font)
 
 
 def draw_needle(draw, cx, cy, r, val):
@@ -43,15 +65,59 @@ def draw_needle(draw, cx, cy, r, val):
     draw.ellipse((cx - 6, cy - 6, cx + 6, cy + 6), fill="white")
 
 
-def wind_direction(deg_str):
-    """Convert NDBC WDIR string (degrees or 'MM'/'999') to compass label."""
-    if deg_str in ("MM", "999"):
-        return "---"
-    return COMPASS[round(int(deg_str) / 45) % 8]
+def render_display(wind, gust, wdir, age):
+    if gust < GOOD_MPH:
+        msg, msg_color = "GOOD", "green"
+    elif gust <= CAUTION_MPH:
+        msg, msg_color = "CAUTION", "yellow"
+    else:
+        msg, msg_color = "TOO WINDY", "red"
+
+    img, d = make_image()
+    cx, cy, r = 160, 205, 112
+    box = (cx - r, cy - r, cx + r, cy + r)
+
+    draw_centered(d, 5,  "PONTOON WIND", "white",    font_title)
+    draw_centered(d, 24, msg,            msg_color,  font_status)
+    draw_centered(d, 54, f"Gust  {gust:.1f} mph",       "white", font_data)
+    draw_centered(d, 72, f"Wind  {wind:.1f} mph   {wdir}", "white", font_data)
+
+    if age is not None:
+        age_color = "yellow" if age >= STALE_MINUTES else (140, 140, 140)
+        age_str = f"{age}m"
+        w = d.textlength(age_str, font=font_label)
+        d.text((device.width - w - 5, 5), age_str, fill=age_color, font=font_label)
+
+    good_arc_end    = round(180 + (GOOD_MPH    / GAUGE_MAX) * 180)
+    caution_arc_end = round(180 + (CAUTION_MPH / GAUGE_MAX) * 180)
+    d.arc(box, 180,           good_arc_end,    fill="green",  width=16)
+    d.arc(box, good_arc_end,  caution_arc_end, fill="yellow", width=16)
+    d.arc(box, caution_arc_end, 360,           fill="red",    width=16)
+
+    draw_needle(d, cx, cy, r, gust)
+
+    d.text((22,  200), "0",            fill="white", font=font_label)
+    d.text((147,  90), str(GOOD_MPH),  fill="white", font=font_label)
+    d.text((268, 200), str(GAUGE_MAX), fill="white", font=font_label)
+
+    device.display(img)
+
+
+def handle_exit(sig, _frame):
+    logging.info("Shutting down (signal %d)", sig)
+    try:
+        img, d = make_image()
+        draw_centered(d, 105, "Offline", (100, 100, 100), font_status)
+        device.display(img)
+    except Exception:
+        pass
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, handle_exit)
+signal.signal(signal.SIGINT,  handle_exit)
 
 
 def fetch_ndbc():
-    """Fetch NDBC text file with up to 3 attempts on transient errors."""
     last_exc = None
     for attempt in range(3):
         try:
@@ -65,19 +131,6 @@ def fetch_ndbc():
     raise last_exc
 
 
-def parse_ndbc(txt):
-    """Return the most recent observation as a column-name → value dict."""
-    lines = txt.splitlines()
-    header_line = next((l for l in lines if l.startswith("#YY")), None)
-    if header_line is None:
-        raise ValueError("NDBC header row not found")
-    cols = header_line.lstrip("#").split()
-    data_line = next((l for l in lines if l.strip() and not l.startswith("#")), None)
-    if data_line is None:
-        raise ValueError("No NDBC data rows found")
-    return dict(zip(cols, data_line.split()))
-
-
 while True:
     try:
         row = parse_ndbc(fetch_ndbc())
@@ -88,44 +141,17 @@ while True:
         gust_raw = row.get("GST", "MM")
         gust = ms_to_mph(float(gust_raw)) if gust_raw != "MM" else wind
         wdir = wind_direction(row.get("WDIR", "MM"))
+        age  = obs_age_minutes(row)
 
-        if gust < GOOD_MPH:
-            msg, msg_color = "GOOD", "green"
-        elif gust <= CAUTION_MPH:
-            msg, msg_color = "CAUTION", "yellow"
-        else:
-            msg, msg_color = "TOO WINDY", "red"
-
-        img, d = make_image()
-        cx, cy, r = 160, 205, 112
-        box = (cx - r, cy - r, cx + r, cy + r)
-
-        d.text((78, 8), "PONTOON WIND", fill="white")
-        d.text((105, 30), msg, fill=msg_color)
-        d.text((80, 52), f"Gust {gust:.1f} mph", fill="white")
-        d.text((85, 70), f"Wind {wind:.1f} mph  {wdir}", fill="white")
-
-        good_arc_end = round(180 + (GOOD_MPH / GAUGE_MAX) * 180)
-        caution_arc_end = round(180 + (CAUTION_MPH / GAUGE_MAX) * 180)
-        d.arc(box, 180, good_arc_end, fill="green", width=16)
-        d.arc(box, good_arc_end, caution_arc_end, fill="yellow", width=16)
-        d.arc(box, caution_arc_end, 360, fill="red", width=16)
-
-        draw_needle(d, cx, cy, r, gust)
-
-        d.text((28, 200), "0", fill="white")
-        d.text((147, 92), str(GOOD_MPH), fill="white")
-        d.text((275, 200), str(GAUGE_MAX), fill="white")
-
-        device.display(img)
-        logging.info("wind=%.1f mph gust=%.1f mph dir=%s status=%s", wind, gust, wdir, msg)
+        render_display(wind, gust, wdir, age)
+        logging.info("wind=%.1f mph gust=%.1f mph dir=%s age=%sm", wind, gust, wdir, age)
 
     except Exception as e:
         logging.error("Update failed: %s", e)
         try:
             img, d = make_image()
-            d.text((20, 20), "ERROR", fill="red")
-            d.text((20, 60), str(e)[:30], fill="white")
+            draw_centered(d, 20, "ERROR", "red", font_status)
+            d.text((12, 65), str(e)[:40], fill="white", font=font_data)
             device.display(img)
         except Exception:
             logging.exception("Error screen render failed")
