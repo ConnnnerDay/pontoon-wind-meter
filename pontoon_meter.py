@@ -372,28 +372,32 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    # r=108 puts the arc outer edge 1 px from every screen edge
-    cx, cy, r = device.width // 2, 120, 108
+    r  = 108
+    # Push arc endpoints (cy + r*sin(45°)) to just above the NOAA strip
+    cy = device.height - 18 - 4 - int(r * 0.707)
+    cx = device.width // 2
 
-    # Draw gauge first — arc covers y=1..20 at the top, face interior below y=20
+    # Draw gauge first
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
-    # Title + wind drawn INSIDE the gauge face (black interior, y > 20)
-    draw_centered(d, 24, "PONTOON WIND", (155, 155, 155), font_label)
+    # Title + wind drawn INSIDE the gauge face at the top
+    title_y = cy - r + 24
+    wind_y  = title_y + 15
+    draw_centered(d, title_y, "PONTOON WIND", (155, 155, 155), font_label)
     wind_str = f"Wind  {wind:.1f} mph  {wdir}"
     wtw = int(d.textlength(wind_str, font=font_label))
     wx  = (device.width - wtw) // 2
-    d.text((wx, 39), wind_str, fill=(130, 130, 130), font=font_label)
+    d.text((wx, wind_y), wind_str, fill=(130, 130, 130), font=font_label)
     trend = _trend(history)
     if trend is not None:
-        _draw_trend(d, wx + wtw + 9, 40, trend)
+        _draw_trend(d, wx + wtw + 9, wind_y + 1, trend)
 
     if age is not None:
         age_color = _YELLOW if age >= STALE_MINUTES else (115, 115, 115)
         age_str = f"{age}m"
         aw = d.textlength(age_str, font=font_label)
-        d.text((int(device.width - aw - 5), 24), age_str, fill=age_color, font=font_label)
+        d.text((int(device.width - aw - 5), title_y), age_str, fill=age_color, font=font_label)
 
     # Status + marine data fill the horseshoe interior below the hub
     draw_centered(d, cy + 38, msg, accent, font_data)
