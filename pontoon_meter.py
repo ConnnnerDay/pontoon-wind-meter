@@ -323,6 +323,15 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
                fill=(220, 220, 220) if is_major else (160, 160, 160),
                width=2 if is_major else 1)
 
+    # Zone-boundary mph labels (upper labels pushed inward to clear title/wind text)
+    for mph_val, lbl in [(0, "0"), (GOOD_MPH, str(GOOD_MPH)),
+                          (CAUTION_MPH, str(CAUTION_MPH)), (GAUGE_MAX, str(GAUGE_MAX))]:
+        ang = _gauge_ang(mph_val)
+        ca, sa = math.cos(ang), math.sin(ang)
+        lbl_r = 55 if sa < -0.1 else 87   # upper half: push toward center
+        lx, ly = cx + lbl_r * ca, cy + lbl_r * sa
+        d.text((int(lx), int(ly)), lbl, fill=(180, 180, 180), font=font_label, anchor="mm")
+
     # Large gust value in the center
     if stale:
         d.text((cx, cy - 15), "STALE", fill=(80, 80, 80), font=font_status, anchor="mm")
@@ -407,7 +416,7 @@ def render_display(state, frame, needle_gust):
     if wvht is not None:
         marine_parts.append(f"{wvht:.1f}ft")
     if marine_parts:
-        draw_centered(d, cy + 56, "  ".join(marine_parts), (120, 120, 120), font_label)
+        draw_centered(d, cy + 48, "  ".join(marine_parts), (120, 120, 120), font_label)
 
     _draw_alert_strip(d, alerts, frame, accent, y0=device.height - 18)
 
