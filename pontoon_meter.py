@@ -85,7 +85,7 @@ def _draw_status_badge(d, y, msg):
 
 
 def _draw_gauge(d, cx, cy, r, gust):
-    """Draw the backing arc, colored zones, tick marks, and needle."""
+    """Draw the backing arc, colored zones, tick marks, scale labels, and needle."""
     box = (cx - r, cy - r, cx + r, cy + r)
 
     # Dark channel arc (slightly wider → creates a thin dark border around the zones)
@@ -108,6 +108,15 @@ def _draw_gauge(d, cx, cy, r, gust):
         tick_color = (200, 200, 200) if is_major else (110, 110, 110)
         d.line([(int(x1), int(y1)), (int(x2), int(y2))],
                fill=tick_color, width=2 if is_major else 1)
+
+    # Scale labels at zone boundaries — positions computed from gauge geometry
+    label_r = r + 16
+    for mph_val, label in [(0, "0"), (GOOD_MPH, str(GOOD_MPH)),
+                            (CAUTION_MPH, str(CAUTION_MPH)), (GAUGE_MAX, str(GAUGE_MAX))]:
+        ang = math.pi * (1 - mph_val / GAUGE_MAX)
+        lx = int(cx + label_r * math.cos(ang))
+        ly = int(cy - label_r * math.sin(ang))
+        d.text((lx, ly), label, fill=(150, 150, 150), font=font_label, anchor="mm")
 
     # Kite-shaped needle: tip at arc, widest ~8 px from pivot, short tail behind
     pct  = min(max(gust / GAUGE_MAX, 0), 1)
@@ -160,11 +169,6 @@ def render_display(wind, gust, wdir, age):
     # ── gauge ────────────────────────────────────────────────────────────
     _draw_gauge(d, cx, cy, r, gust)
 
-    # Scale labels
-    d.text((18,  198), "0",            fill=(150, 150, 150), font=font_label)
-    d.text((145,  88), str(GOOD_MPH),  fill=(150, 150, 150), font=font_label)
-    d.text((266, 198), str(GAUGE_MAX), fill=(150, 150, 150), font=font_label)
-
     device.display(img)
 
 
@@ -197,33 +201,43 @@ def fetch_ndbc():
     raise last_exc
 
 
-while True:
-    cycle_start = time.monotonic()
+def main():
+    img, d = make_image()
+    draw_centered(d, 98,  "PONTOON WIND", (100, 100, 100), font_title)
+    draw_centered(d, 116, "Connecting…",  (60,  60,  60),  font_status)
+    device.display(img)
 
-    try:
-        row = parse_ndbc(fetch_ndbc())
+    while True:
+        cycle_start = time.monotonic()
 
-        if row.get("WSPD", "MM") == "MM":
-            raise ValueError("WSPD reading unavailable")
-        wind = ms_to_mph(float(row["WSPD"]))
-        gust_raw = row.get("GST", "MM")
-        gust = ms_to_mph(float(gust_raw)) if gust_raw != "MM" else wind
-        wdir = wind_direction(row.get("WDIR", "MM"))
-        age  = obs_age_minutes(row)
-
-        render_display(wind, gust, wdir, age)
-        logging.info("wind=%.1f mph gust=%.1f mph dir=%s age=%sm", wind, gust, wdir, age)
-
-    except Exception as e:
-        logging.error("Update failed: %s", e)
         try:
-            img, d = make_image()
-            draw_centered(d, 20, "ERROR", _RED, font_status)
-            d.text((12, 65), textwrap.shorten(str(e), width=40, placeholder="…"),
-                   fill=(180, 180, 180), font=font_data)
-            device.display(img)
-        except Exception:
-            logging.exception("Error screen render failed")
+            row = parse_ndbc(fetch_ndbc())
 
-    elapsed = time.monotonic() - cycle_start
-    time.sleep(max(0.0, POLL_INTERVAL - elapsed))
+            if row.get("WSPD", "MM") == "MM":
+                raise ValueError("WSPD reading unavailable")
+            wind = ms_to_mph(float(row["WSPD"]))
+            gust_raw = row.get("GST", "MM")
+            gust = ms_to_mph(float(gust_raw)) if gust_raw != "MM" else wind
+            wdir = wind_direction(row.get("WDIR", "MM"))
+            age  = obs_age_minutes(row)
+
+            render_display(wind, gust, wdir, age)
+            logging.info("wind=%.1f mph gust=%.1f mph dir=%s age=%sm", wind, gust, wdir, age)
+
+        except Exception as e:
+            logging.error("Update failed: %s", e)
+            try:
+                img, d = make_image()
+                draw_centered(d, 20, "ERROR", _RED, font_status)
+                d.text((12, 65), textwrap.shorten(str(e), width=40, placeholder="…"),
+                       fill=(180, 180, 180), font=font_data)
+                device.display(img)
+            except Exception:
+                logging.exception("Error screen render failed")
+
+        elapsed = time.monotonic() - cycle_start
+        time.sleep(max(0.0, POLL_INTERVAL - elapsed))
+
+
+if __name__ == "__main__":
+    main()
