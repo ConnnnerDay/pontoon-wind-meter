@@ -1,21 +1,24 @@
+from __future__ import annotations
+
 from datetime import datetime, timezone
 
 MS_TO_MPH = 2.23694
-_COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+_COMPASS: list[str] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
 
-def ms_to_mph(ms):
+def ms_to_mph(ms: float) -> float:
+    """Convert metres per second to miles per hour."""
     return ms * MS_TO_MPH
 
 
-def wind_direction(deg_str):
+def wind_direction(deg_str: str) -> str:
     """Convert NDBC WDIR string (degrees, 'MM', or '999') to compass label."""
     if deg_str in ("MM", "999"):
         return "---"
     return _COMPASS[round(int(deg_str) / 45) % 8]
 
 
-def parse_ndbc(txt):
+def parse_ndbc(txt: str) -> dict[str, str]:
     """Return the most recent observation as a column-name → value dict.
 
     Finds the header by the '#YY' sentinel so it is robust against NDBC
@@ -32,7 +35,7 @@ def parse_ndbc(txt):
     return dict(zip(cols, data_line.split()))
 
 
-def obs_age_minutes(row):
+def obs_age_minutes(row: dict[str, str]) -> int | None:
     """Return how many minutes ago the observation was recorded (UTC), or None."""
     try:
         obs = datetime(

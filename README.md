@@ -2,18 +2,22 @@
 
 A Raspberry Pi Zero 2 W marine conditions display that uses live NOAA buoy data to determine whether conditions are suitable for taking a pontoon boat out on the Intracoastal Waterway near Wilmington, North Carolina.
 
-The project uses a low-cost SPI TFT display and displays current wind conditions as a large green / yellow / red gauge similar to a credit score meter.
+The project uses a low-cost SPI TFT display and shows current wind conditions as a green / yellow / red gauge similar to a credit score meter.
 
 ---
 
 ## Features
 
-* Live NOAA / NDBC buoy data
-* Green / yellow / red safety gauge
-* Designed for pontoon boating conditions
-* Optimized for small SPI TFT displays
+* Live NOAA / NDBC buoy data (Station 41038, Wrightsville Beach Nearshore, NC)
+* Green / yellow / red safety gauge with needle
+* Wind speed, gust speed, and wind direction display
+* Data age indicator — turns yellow when the reading is older than 90 minutes
+* Arc color zones matched precisely to the GOOD / CAUTION / TOO WINDY thresholds
+* TrueType font rendering (DejaVuSans) with bitmap fallback
+* Auto-retries failed fetches (up to 3 attempts) before showing an error screen
+* Graceful shutdown — clears the display when the service is stopped
 * Auto-starts at boot using systemd
-* Lightweight Python implementation
+* All log output routed to `journalctl`
 * Headless operation over SSH
 * Runs on a Raspberry Pi Zero 2 W
 
@@ -21,16 +25,27 @@ The project uses a low-cost SPI TFT display and displays current wind conditions
 
 ## Current Data Source
 
-NOAA / NDBC Station 41038
-Wrightsville Beach Nearshore, NC
+NOAA / NDBC Station 41038 — Wrightsville Beach Nearshore, NC
 
-The display currently uses:
+The display uses:
 
-* Wind speed
-* Wind gusts
-* Wind direction
+* Wind speed (m/s → mph)
+* Wind gust speed (m/s → mph)
+* Wind direction (compass label: N / NE / E / … )
 
-Wind data is retrieved directly from NOAA realtime station text feeds.
+Wind data is retrieved directly from NOAA realtime station text feeds every 5 minutes.
+
+---
+
+## Gauge Logic
+
+| Status    | Gust speed    | Arc color |
+| --------- | ------------- | --------- |
+| GOOD      | Under 12 mph  | Green     |
+| CAUTION   | 12 – 18 mph   | Yellow    |
+| TOO WINDY | Over 18 mph   | Red       |
+
+These thresholds are experimental and may be adjusted for local ICW conditions. Change `GOOD_MPH` and `CAUTION_MPH` at the top of `pontoon_meter.py`.
 
 ---
 
@@ -39,32 +54,11 @@ Wind data is retrieved directly from NOAA realtime station text feeds.
 ### Main Components
 
 * Raspberry Pi Zero 2 W
-* 2.4" SPI TFT display
-* ILI9341-compatible display controller
+* 2.4" SPI TFT display (ILI9341 controller)
 * MicroSD card
 * 5V USB power supply
 
-### Display Type
-
-This project currently targets common low-cost SPI TFT displays that expose pins similar to:
-
-```text
-SDO
-LED
-SCK
-SDI
-DC
-RESET
-CS
-GND
-VCC
-```
-
----
-
-## Wiring
-
-### TFT Display → Raspberry Pi Zero 2 W
+### Display Pinout
 
 | TFT Pin | Raspberry Pi Pin |
 | ------- | ---------------- |
@@ -78,45 +72,25 @@ VCC
 | GND     | GND / Pin 6      |
 | VCC     | 3.3V / Pin 17    |
 
-Important:
-
-* Use 3.3V only
-* Do not connect the display to 5V
-* SPI must be enabled in `raspi-config`
+**Important:** use 3.3 V only — do not connect the display to 5 V. SPI must be enabled in `raspi-config`.
 
 ---
 
-## Raspberry Pi OS
+## Setup
 
-Recommended OS:
+### Raspberry Pi OS
 
-* Raspberry Pi OS Lite (64-bit)
+Raspberry Pi OS Lite (64-bit) is recommended. The project runs headless over SSH.
 
-The project is intended to run headless over SSH.
-
----
-
-## Enable SPI
+### Enable SPI
 
 ```bash
 sudo raspi-config
+# Interface Options → SPI → Enable
+# Reboot afterward
 ```
 
-Navigate to:
-
-```text
-Interface Options
-→ SPI
-→ Enable
-```
-
-Reboot afterward.
-
----
-
-## Python Environment
-
-### Install Dependencies
+### Install System Dependencies
 
 ```bash
 sudo apt update
@@ -128,19 +102,18 @@ sudo apt install -y python3-pip python3-pil python3-numpy python3-rpi.gpio pytho
 ```bash
 python3 -m venv --system-site-packages ~/tftenv
 source ~/tftenv/bin/activate
+pip install luma.core luma.lcd "Pillow>=8.0"
 ```
 
-### Install Python Packages
+### Deploy the Script
 
 ```bash
-pip install luma.lcd Pillow
+cp pontoon_meter.py ndbc.py ~/
 ```
 
 ---
 
-## Running the Display
-
-### Manual Start
+## Running Manually
 
 ```bash
 /home/pizero/tftenv/bin/python /home/pizero/pontoon_meter.py
@@ -150,13 +123,10 @@ pip install luma.lcd Pillow
 
 ## systemd Service
 
-### Service File
-
-`systemd/pontoon-meter.service`
-
-### Enable Service
+Copy the service file and enable it:
 
 ```bash
+sudo cp systemd/pontoon-meter.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable pontoon-meter.service
 sudo systemctl start pontoon-meter.service
@@ -164,55 +134,22 @@ sudo systemctl start pontoon-meter.service
 
 ### Service Commands
 
-Check status:
-
 ```bash
 systemctl status pontoon-meter.service
-```
-
-Restart:
-
-```bash
 sudo systemctl restart pontoon-meter.service
-```
-
-View logs:
-
-```bash
 journalctl -u pontoon-meter.service -f
 ```
 
 ---
 
-## Current Gauge Logic
+## Running Tests
 
-Current thresholds:
+Tests cover the NDBC parsing and conversion functions and run on any machine — no Pi or display hardware required.
 
-| Status | Wind Gust         |
-| ------ | ----------------- |
-| Green  | Under 12 mph      |
-| Yellow | 12–18 mph         |
-| Red    | Over 18 mph       |
-
-These values are still experimental and may be adjusted for local ICW conditions.
-
----
-
-## Project Goals
-
-Planned improvements:
-
-* Better gauge graphics
-* Touchscreen support
-* NOAA marine forecast integration
-* Tide data
-* Radar overlays
-* GPS support
-* Multiple buoy selection
-* Weather alerts
-* Waterproof enclosure
-* Battery-powered portable version
-* Sunlight-readable display options
+```bash
+pip install pytest        # or: pip install -r requirements-dev.txt
+pytest test_ndbc.py -v
+```
 
 ---
 
@@ -220,26 +157,44 @@ Planned improvements:
 
 ```text
 pontoon-wind-meter/
+├── .gitignore
 ├── README.md
-├── pontoon_meter.py
-├── requirements.txt
+├── ndbc.py               # pure functions: parsing, conversion, data age
+├── pontoon_meter.py      # main display loop (hardware)
+├── requirements.txt      # runtime dependencies
+├── requirements-dev.txt  # test dependencies
 ├── systemd/
 │   └── pontoon-meter.service
-
+└── test_ndbc.py          # 26 unit tests for ndbc.py
 ```
 
 ---
 
 ## Notes
 
-This project is intentionally lightweight and designed around:
+This project is intentionally lightweight:
 
-* low power consumption
-* simple hardware
-* easy field deployment
-* marine environment usability
+* Low power consumption
+* Simple hardware
+* Easy field deployment
+* Marine environment usability
 
-The goal is not to replace official marine forecasts, but to provide a quick visual “go / no-go” indicator for local recreational boating conditions.
+The goal is not to replace official marine forecasts, but to provide a quick visual go / no-go indicator for local recreational boating conditions.
+
+---
+
+## Project Goals
+
+Planned improvements:
+
+* Touchscreen support
+* NOAA marine forecast integration
+* Tide data
+* Multiple buoy selection
+* Weather alerts
+* Waterproof enclosure
+* Battery-powered portable version
+* Sunlight-readable display options
 
 ---
 

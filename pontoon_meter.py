@@ -6,6 +6,7 @@ import logging
 import math
 import signal
 import sys
+import textwrap
 import time
 
 from ndbc import ms_to_mph, wind_direction, parse_ndbc, obs_age_minutes
@@ -151,7 +152,7 @@ while True:
         try:
             img, d = make_image()
             draw_centered(d, 20, "ERROR", "red", font_status)
-            d.text((12, 65), str(e)[:40], fill="white", font=font_data)
+            d.text((12, 65), textwrap.shorten(str(e), width=40, placeholder="…"), fill="white", font=font_data)
             device.display(img)
         except Exception:
             logging.exception("Error screen render failed")
