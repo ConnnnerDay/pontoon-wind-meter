@@ -262,17 +262,6 @@ def _draw_marine_wave(d, frame, color, y_mid):
         prev = (x, y)
 
 
-def _draw_marine_data(d, wtmp, wvht, atmp, y=88):
-    """Water temp (left), air temp (center), wave height (right)."""
-    if wtmp is not None:
-        d.text((12, y), f"Water {wtmp:.0f}°F", fill=(150, 150, 150), font=font_label)
-    if atmp is not None:
-        d.text((device.width // 2, y), f"Air {atmp:.0f}°F",
-               fill=(140, 140, 140), font=font_label, anchor="mt")
-    if wvht is not None:
-        d.text((device.width - 12, y), f"Waves {wvht:.1f}ft",
-               fill=(150, 150, 150), font=font_label, anchor="ra")
-
 
 def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None):
     """Top strip: cycles through NOAA alerts; when quiet, alternates marine data with clock/wave."""
@@ -400,6 +389,7 @@ def render_display(state, frame, needle_gust):
     age     = state["age"]
     wtmp    = state["wtmp"]
     wvht    = state["wvht"]
+    atmp    = state["atmp"]
     alerts  = state["alerts"]
     history = state.get("gust_history", [])
 
@@ -454,8 +444,10 @@ def render_display(state, frame, needle_gust):
     marine_parts = []
     if wtmp is not None:
         marine_parts.append(f"Water {wtmp:.0f}°")
+    if atmp is not None:
+        marine_parts.append(f"Air {atmp:.0f}°")
     if wvht is not None:
-        marine_parts.append(f"{wvht:.1f}ft")
+        marine_parts.append(f"{wvht:.1f}ft waves")
     marine_str = "  ".join(marine_parts) if marine_parts else None
 
     # Top strip: NOAA advisories → cycle through alerts, or alternate wave/marine when clear
