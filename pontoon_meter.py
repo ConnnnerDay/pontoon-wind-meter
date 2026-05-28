@@ -2,24 +2,29 @@ from luma.core.interface.serial import spi
 from luma.lcd.device import ili9341
 from PIL import Image, ImageDraw, ImageFont
 from urllib.request import urlopen, Request
+import json
 import logging
 import math
 import os
 import signal
 import sys
 import textwrap
+import threading
 import time
 
 from ndbc import ms_to_mph, wind_direction, parse_ndbc, obs_age_minutes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-URL           = "https://www.ndbc.noaa.gov/data/realtime2/41038.txt"
-POLL_INTERVAL = 300
-GAUGE_MAX     = 25    # mph, full-scale
-GOOD_MPH      = 12
-CAUTION_MPH   = 18
-STALE_MINUTES = 90
+URL             = "https://www.ndbc.noaa.gov/data/realtime2/41038.txt"
+ALERTS_URL      = "https://api.weather.gov/alerts/active?point=34.2108,-77.5986"
+POLL_INTERVAL   = 300   # seconds between NDBC refreshes
+ALERTS_INTERVAL = 600   # seconds between alert refreshes
+FRAME_RATE      = 5     # display frames per second
+GAUGE_MAX       = 25    # mph, full-scale
+GOOD_MPH        = 12
+CAUTION_MPH     = 18
+STALE_MINUTES   = 90
 
 # Arc boundary angles (PIL degrees, precomputed from thresholds)
 GOOD_ARC_END    = round(180 + (GOOD_MPH    / GAUGE_MAX) * 180)
@@ -31,9 +36,17 @@ _YELLOW = (210, 165, 0)
 _RED    = (210, 40, 40)
 
 _STATUS_CONFIG = {
-    "GOOD":      (_GREEN,  (0, 55, 22)),    # (accent, badge_bg)
+    "GOOD":      (_GREEN,  (0, 55, 22)),
     "CAUTION":   (_YELLOW, (65, 52, 0)),
     "TOO WINDY": (_RED,    (70, 12, 12)),
+}
+
+_ALERT_COLORS = {
+    "Extreme":  _RED,
+    "Severe":   _RED,
+    "Moderate": (220, 110, 0),
+    "Minor":    _YELLOW,
+    "Unknown":  _YELLOW,
 }
 
 # Font loading — find the first usable TrueType font once
@@ -61,6 +74,13 @@ except Exception as e:
     logging.critical("Display init failed: %s", e)
     sys.exit(1)
 
+# Thread-safe state shared between the data thread and the animation loop
+_lock  = threading.Lock()
+_state = {
+    "wind": None, "gust": None, "wdir": "---",
+    "age": None, "alerts": [], "error": None,
+}
+
 
 def make_image():
     img = Image.new("RGB", device.size, "black")
@@ -72,42 +92,104 @@ def draw_centered(d, y, text, fill, font):
     d.text((int((device.width - w) / 2), y), text, fill=fill, font=font)
 
 
-def _draw_status_badge(d, y, msg):
-    """Rounded-rectangle badge with colored border and dim fill."""
-    accent, bg = _STATUS_CONFIG[msg]
+def _fit_text(d, text, font, max_w):
+    """Truncate text with ellipsis to fit within max_w pixels."""
+    if d.textlength(text, font=font) <= max_w:
+        return text
+    while len(text) > 1 and d.textlength(text[:-1] + "…", font=font) > max_w:
+        text = text[:-1]
+    return text[:-1] + "…"
+
+
+def _draw_status_badge(d, y, msg, frame):
+    """Rounded-rectangle badge with a sinusoidally pulsing border."""
+    accent_base, bg = _STATUS_CONFIG[msg]
+    amp = 50 if msg == "TOO WINDY" else 20
+    pulse = int(amp * math.sin(frame * math.pi / (FRAME_RATE * 1.2)))
+    accent = tuple(min(255, max(0, c + pulse)) for c in accent_base)
     text_w = d.textlength(msg, font=font_status)
     bw = max(int(text_w) + 32, 150)
     bx = int((device.width - bw) / 2)
     bh = 30
     d.rounded_rectangle([bx, y, bx + bw, y + bh], radius=6, fill=bg, outline=accent, width=2)
-    # anchor="mm" centers the text on the badge mid-point exactly
     d.text((device.width // 2, y + bh // 2), msg, fill="white", font=font_status, anchor="mm")
 
 
-def _draw_gauge(d, cx, cy, r, gust):
-    """Draw the backing arc, colored zones, tick marks, scale labels, and needle."""
+def _draw_wind_streaks(d, cx, cy, r, gust, frame):
+    """Animated short dashes flowing along the inner gauge face, speed ∝ wind."""
+    speed  = max(2, round(20 - gust * 0.4))   # frames per full sweep
+    inner  = r - 24                             # radius just inside the tick zone
+    n      = 5
+    for i in range(n):
+        phase = ((frame // speed + i * (100 // n)) % 100) / 100.0
+        ang   = math.pi * (1 - phase)           # sweeps left→right with gauge
+        ca, sa = math.cos(ang), math.sin(ang)
+        bright = int(35 + 80 * math.sin(phase * math.pi))  # bell-curve fade
+        perp = ang + math.pi / 2
+        cp, sp = math.cos(perp), math.sin(perp)
+        hw = 4
+        x0 = cx + inner * ca
+        y0 = cy - inner * sa
+        x1 = int(x0 + hw * cp);  y1 = int(y0 - hw * sp)
+        x2 = int(x0 - hw * cp);  y2 = int(y0 + hw * sp)
+        d.line([(x1, y1), (x2, y2)], fill=(bright, bright, bright), width=1)
+
+
+def _draw_alert_strip(d, alerts, frame):
+    """Bottom strip cycling through active NOAA weather alerts."""
+    if not alerts:
+        return
+    idx = (frame // (FRAME_RATE * 4)) % len(alerts)   # new alert every 4 s
+    name, severity = alerts[idx]
+    color = _ALERT_COLORS.get(severity, _YELLOW)
+
+    y0 = 222
+    d.rectangle([0, y0, device.width - 1, 239], fill=(12, 12, 12))
+    d.line([0, y0, device.width, y0], fill=(40, 40, 40))
+
+    # Pulsing warning dot
+    pulse = 0.55 + 0.45 * math.sin(frame * math.pi / (FRAME_RATE * 0.7))
+    dot_color = tuple(min(255, int(c * pulse)) for c in color)
+    d.ellipse([7, y0 + 4, 15, y0 + 12], fill=dot_color)
+
+    # Alert name, truncated to available width
+    text = _fit_text(d, name, font_label, device.width - 26)
+    d.text((21, y0 + 8), text, fill=color, font=font_label, anchor="lm")
+
+    # Page indicator when there are multiple alerts
+    if len(alerts) > 1:
+        count_str = f"{idx + 1}/{len(alerts)}"
+        cw = int(d.textlength(count_str, font=font_label))
+        d.text((device.width - cw - 4, y0 + 8), count_str,
+               fill=(65, 65, 65), font=font_label, anchor="lm")
+
+
+def _draw_gauge(d, cx, cy, r, gust, frame):
+    """Draw the backing arc, colored zones, tick marks, scale labels, wind streaks, and needle."""
     box = (cx - r, cy - r, cx + r, cy + r)
 
-    # Dark channel arc (slightly wider → creates a thin dark border around the zones)
+    # Dark channel arc (slightly wider → thin dark border around the zones)
     d.arc(box, 178, 362, fill=(30, 30, 30), width=22)
 
     # Colored zone arcs
-    d.arc(box, 180,           GOOD_ARC_END,    fill=_GREEN,  width=16)
-    d.arc(box, GOOD_ARC_END,  CAUTION_ARC_END, fill=_YELLOW, width=16)
-    d.arc(box, CAUTION_ARC_END, 360,           fill=_RED,    width=16)
+    d.arc(box, 180,             GOOD_ARC_END,    fill=_GREEN,  width=16)
+    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END, fill=_YELLOW, width=16)
+    d.arc(box, CAUTION_ARC_END, 360,             fill=_RED,    width=16)
+
+    _draw_wind_streaks(d, cx, cy, r, gust, frame)
 
     # Tick marks at every 5 mph, drawn just inside the arc inner edge
-    tick_outer = r - 8   # inner edge of the colored arc
-    tick_inner = r - 18  # 10 px inward
+    tick_outer = r - 8
+    tick_inner = r - 18
     for mph_val in range(0, GAUGE_MAX + 1, 5):
         ang = math.pi * (1 - mph_val / GAUGE_MAX)
         ca, sa = math.cos(ang), math.sin(ang)
         x1, y1 = cx + tick_outer * ca, cy - tick_outer * sa
         x2, y2 = cx + tick_inner * ca, cy - tick_inner * sa
         is_major = (mph_val % 10 == 0) or mph_val == GAUGE_MAX
-        tick_color = (200, 200, 200) if is_major else (110, 110, 110)
         d.line([(int(x1), int(y1)), (int(x2), int(y2))],
-               fill=tick_color, width=2 if is_major else 1)
+               fill=(200, 200, 200) if is_major else (110, 110, 110),
+               width=2 if is_major else 1)
 
     # Scale labels at zone boundaries — positions computed from gauge geometry
     label_r = r + 16
@@ -118,24 +200,22 @@ def _draw_gauge(d, cx, cy, r, gust):
         ly = int(cy - label_r * math.sin(ang))
         d.text((lx, ly), label, fill=(150, 150, 150), font=font_label, anchor="mm")
 
-    # Kite-shaped needle: tip at arc, widest ~8 px from pivot, short tail behind
+    # Kite-shaped needle
     pct  = min(max(gust / GAUGE_MAX, 0), 1)
     ang  = math.pi * (1 - pct)
     perp = ang + math.pi / 2
     ca, sa = math.cos(ang), math.sin(ang)
     cp, sp = math.cos(perp), math.sin(perp)
-
-    tip  = (cx + r  * ca,  cy - r  * sa)   # tip at arc face
-    wide = (cx + 8  * ca,  cy - 8  * sa)   # widest point, 8 px from pivot
-    tail = (cx - 14 * ca,  cy + 14 * sa)   # short tail behind pivot
-    hw   = 5.5                              # half-width at the wide point
-    left  = (wide[0] + hw * cp,  wide[1] - hw * sp)
-    right = (wide[0] - hw * cp,  wide[1] + hw * sp)
-
+    tip   = (cx + r  * ca,  cy - r  * sa)
+    wide  = (cx + 8  * ca,  cy - 8  * sa)
+    tail  = (cx - 14 * ca,  cy + 14 * sa)
+    hw = 5.5
+    left  = (wide[0] + hw * cp, wide[1] - hw * sp)
+    right = (wide[0] - hw * cp, wide[1] + hw * sp)
     d.polygon(
-        [(int(tip[0]), int(tip[1])),
-         (int(left[0]), int(left[1])),
-         (int(tail[0]), int(tail[1])),
+        [(int(tip[0]),   int(tip[1])),
+         (int(left[0]),  int(left[1])),
+         (int(tail[0]),  int(tail[1])),
          (int(right[0]), int(right[1]))],
         fill=(240, 240, 240),
     )
@@ -145,7 +225,13 @@ def _draw_gauge(d, cx, cy, r, gust):
     d.ellipse((cx -  5, cy -  5, cx +  5, cy +  5), fill=(210, 210, 210))
 
 
-def render_display(wind, gust, wdir, age):
+def render_display(state, frame):
+    wind   = state["wind"]
+    gust   = state["gust"]
+    wdir   = state["wdir"]
+    age    = state["age"]
+    alerts = state["alerts"]
+
     msg = ("GOOD" if gust < GOOD_MPH
            else "CAUTION" if gust <= CAUTION_MPH
            else "TOO WINDY")
@@ -153,23 +239,38 @@ def render_display(wind, gust, wdir, age):
     img, d = make_image()
     cx, cy, r = 160, 205, 112
 
-    # ── header ──────────────────────────────────────────────────────────
-    draw_centered(d, 5, "PONTOON WIND", (160, 160, 160), font_title)
-    _draw_status_badge(d, 23, msg)
-    draw_centered(d, 58, f"Gust  {gust:.1f} mph",       "white", font_data)
+    draw_centered(d, 5,  "PONTOON WIND",                   (160, 160, 160), font_title)
+    _draw_status_badge(d, 23, msg, frame)
+    draw_centered(d, 58, f"Gust  {gust:.1f} mph",          "white", font_data)
     draw_centered(d, 75, f"Wind  {wind:.1f} mph   {wdir}", "white", font_data)
 
-    # Data-age indicator (top-right, dims to gray, turns yellow when stale)
     if age is not None:
         age_color = _YELLOW if age >= STALE_MINUTES else (100, 100, 100)
         age_str = f"{age}m"
         w = d.textlength(age_str, font=font_label)
         d.text((int(device.width - w - 5), 5), age_str, fill=age_color, font=font_label)
 
-    # ── gauge ────────────────────────────────────────────────────────────
-    _draw_gauge(d, cx, cy, r, gust)
+    _draw_gauge(d, cx, cy, r, gust, frame)
+    _draw_alert_strip(d, alerts, frame)
 
     device.display(img)
+
+
+def fetch_alerts():
+    req = Request(ALERTS_URL,
+                  headers={"User-Agent": "pontoon-wind-meter/1.0",
+                            "Accept": "application/geo+json"})
+    with urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read().decode())
+    seen, result = set(), []
+    for feat in data.get("features", []):
+        props = feat.get("properties", {})
+        event = props.get("event", "")
+        sev   = props.get("severity", "Unknown")
+        if event and event not in seen:
+            seen.add(event)
+            result.append((event.upper(), sev))
+    return result
 
 
 def handle_exit(sig, _frame):
@@ -201,42 +302,80 @@ def fetch_ndbc():
     raise last_exc
 
 
+def _data_loop():
+    """Background thread: refresh NDBC wind data and NOAA alerts on independent timers."""
+    last_alert_fetch = 0.0
+    while True:
+        t0 = time.monotonic()
+
+        try:
+            row = parse_ndbc(fetch_ndbc())
+            if row.get("WSPD", "MM") == "MM":
+                raise ValueError("WSPD reading unavailable")
+            wind     = ms_to_mph(float(row["WSPD"]))
+            gust_raw = row.get("GST", "MM")
+            gust     = ms_to_mph(float(gust_raw)) if gust_raw != "MM" else wind
+            wdir     = wind_direction(row.get("WDIR", "MM"))
+            age      = obs_age_minutes(row)
+            with _lock:
+                _state.update(wind=wind, gust=gust, wdir=wdir, age=age, error=None)
+            logging.info("wind=%.1f mph gust=%.1f mph dir=%s age=%sm", wind, gust, wdir, age)
+        except Exception as e:
+            logging.error("NDBC fetch failed: %s", e)
+            with _lock:
+                _state["error"] = str(e)
+
+        if time.monotonic() - last_alert_fetch >= ALERTS_INTERVAL:
+            try:
+                alerts = fetch_alerts()
+                with _lock:
+                    _state["alerts"] = alerts
+                if alerts:
+                    logging.info("Active alerts: %s", [a[0] for a in alerts])
+                else:
+                    logging.info("No active alerts")
+            except Exception as e:
+                logging.warning("Alert fetch failed: %s", e)
+            last_alert_fetch = time.monotonic()
+
+        elapsed = time.monotonic() - t0
+        time.sleep(max(0.0, POLL_INTERVAL - elapsed))
+
+
 def main():
+    threading.Thread(target=_data_loop, daemon=True).start()
+
     img, d = make_image()
     draw_centered(d, 98,  "PONTOON WIND", (100, 100, 100), font_title)
     draw_centered(d, 116, "Connecting…",  (60,  60,  60),  font_status)
     device.display(img)
 
+    frame = 0
     while True:
-        cycle_start = time.monotonic()
+        t0 = time.monotonic()
 
-        try:
-            row = parse_ndbc(fetch_ndbc())
+        with _lock:
+            snap         = dict(_state)
+            snap["alerts"] = list(_state["alerts"])
 
-            if row.get("WSPD", "MM") == "MM":
-                raise ValueError("WSPD reading unavailable")
-            wind = ms_to_mph(float(row["WSPD"]))
-            gust_raw = row.get("GST", "MM")
-            gust = ms_to_mph(float(gust_raw)) if gust_raw != "MM" else wind
-            wdir = wind_direction(row.get("WDIR", "MM"))
-            age  = obs_age_minutes(row)
-
-            render_display(wind, gust, wdir, age)
-            logging.info("wind=%.1f mph gust=%.1f mph dir=%s age=%sm", wind, gust, wdir, age)
-
-        except Exception as e:
-            logging.error("Update failed: %s", e)
+        if snap["wind"] is not None:
+            try:
+                render_display(snap, frame)
+            except Exception:
+                logging.exception("Render failed")
+        elif snap["error"] is not None:
             try:
                 img, d = make_image()
                 draw_centered(d, 20, "ERROR", _RED, font_status)
-                d.text((12, 65), textwrap.shorten(str(e), width=40, placeholder="…"),
+                d.text((12, 65), textwrap.shorten(snap["error"], width=40, placeholder="…"),
                        fill=(180, 180, 180), font=font_data)
                 device.display(img)
             except Exception:
                 logging.exception("Error screen render failed")
 
-        elapsed = time.monotonic() - cycle_start
-        time.sleep(max(0.0, POLL_INTERVAL - elapsed))
+        frame += 1
+        elapsed = time.monotonic() - t0
+        time.sleep(max(0.0, 1 / FRAME_RATE - elapsed))
 
 
 if __name__ == "__main__":
