@@ -78,7 +78,7 @@ except Exception as e:
 _lock  = threading.Lock()
 _state = {
     "wind": None, "gust": None, "wdir": "---",
-    "age": None, "wtmp": None, "wvht": None,
+    "age": None, "wtmp": None, "wvht": None, "atmp": None,
     "gust_history": [],          # most-recent-first list of up to 6 gust readings
     "alerts": [], "error": None,
 }
@@ -230,10 +230,13 @@ def _draw_marine_wave(d, frame, color):
         prev = (x, y)
 
 
-def _draw_marine_data(d, wtmp, wvht):
-    """Water temp (left) and wave height (right) flanking the gauge top at y=88."""
+def _draw_marine_data(d, wtmp, wvht, atmp):
+    """Water temp (left), air temp (center), wave height (right) at y=88."""
     if wtmp is not None:
         d.text((12, 88), f"Water {wtmp:.0f}°F", fill=(90, 90, 90), font=font_label)
+    if atmp is not None:
+        d.text((device.width // 2, 88), f"Air {atmp:.0f}°F",
+               fill=(80, 80, 80), font=font_label, anchor="mt")
     if wvht is not None:
         d.text((device.width - 12, 88), f"Waves {wvht:.1f}ft",
                fill=(90, 90, 90), font=font_label, anchor="ra")
@@ -345,6 +348,10 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
         fill=needle_fill,
     )
 
+    # Stale data watermark — centered in the arc face
+    if stale:
+        d.text((cx, cy - r // 2), "STALE", fill=(52, 52, 52), font=font_status, anchor="mm")
+
     # Pivot hub: dark ring with subtle outline, bright centre dot
     d.ellipse((cx - 11, cy - 11, cx + 11, cy + 11), fill=(28, 28, 28), outline=(90, 90, 90), width=1)
     d.ellipse((cx -  5, cy -  5, cx +  5, cy +  5), fill=(210, 210, 210))
@@ -357,6 +364,7 @@ def render_display(state, frame, needle_gust):
     age     = state["age"]
     wtmp    = state["wtmp"]
     wvht    = state["wvht"]
+    atmp    = state.get("atmp")
     alerts  = state["alerts"]
     history = state.get("gust_history", [])
 
@@ -382,7 +390,7 @@ def render_display(state, frame, needle_gust):
 
     draw_centered(d, 75, f"Wind  {wind:.1f} mph", "white", font_data)
     _draw_compass(d, 285, 75, 11, wdir)
-    _draw_marine_data(d, wtmp, wvht)
+    _draw_marine_data(d, wtmp, wvht, atmp)
 
     if age is not None:
         age_color = _YELLOW if age >= STALE_MINUTES else (100, 100, 100)
@@ -469,12 +477,14 @@ def _data_loop():
             age      = obs_age_minutes(row)
             wtmp_raw = row.get("WTMP", "MM")
             wvht_raw = row.get("WVHT", "MM")
+            atmp_raw = row.get("ATMP", "MM")
             wtmp = celsius_to_f(float(wtmp_raw)) if wtmp_raw != "MM" else None
             wvht = m_to_ft(float(wvht_raw))      if wvht_raw != "MM" else None
+            atmp = celsius_to_f(float(atmp_raw)) if atmp_raw != "MM" else None
             with _lock:
                 new_history = [gust] + _state["gust_history"][:5]
                 _state.update(wind=wind, gust=gust, wdir=wdir, age=age,
-                              wtmp=wtmp, wvht=wvht,
+                              wtmp=wtmp, wvht=wvht, atmp=atmp,
                               gust_history=new_history, error=None)
             logging.info("wind=%.1f mph gust=%.1f mph dir=%s age=%sm wtmp=%s wvht=%s",
                          wind, gust, wdir, age,
@@ -507,11 +517,6 @@ def main():
 
     threading.Thread(target=_data_loop, daemon=True).start()
 
-    img, d = make_image()
-    draw_centered(d, 98,  "PONTOON WIND", (100, 100, 100), font_title)
-    draw_centered(d, 116, "Connecting…",  (60,  60,  60),  font_status)
-    device.display(img)
-
     frame = 0
     while True:
         t0 = time.monotonic()
@@ -537,6 +542,17 @@ def main():
                 device.display(img)
             except Exception:
                 logging.exception("Error screen render failed")
+        else:
+            # Animated connecting screen — pulsing dots while waiting for first data
+            try:
+                dots = "." * ((frame // FRAME_RATE) % 4)
+                bright = int(60 + 30 * math.sin(frame * math.pi / (FRAME_RATE * 2)))
+                img, d = make_image()
+                draw_centered(d, 98,  "PONTOON WIND",      (bright, bright, bright),       font_title)
+                draw_centered(d, 116, f"Connecting{dots}", (bright - 20, bright - 20, bright - 20), font_status)
+                device.display(img)
+            except Exception:
+                logging.exception("Connecting screen render failed")
 
         frame += 1
         elapsed = time.monotonic() - t0
