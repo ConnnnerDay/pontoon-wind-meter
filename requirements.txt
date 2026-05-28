@@ -1,2 +1,3 @@
+luma.core
 luma.lcd
-Pillow
+Pillow>=8.2
