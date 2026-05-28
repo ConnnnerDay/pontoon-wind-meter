@@ -69,7 +69,7 @@ font_label  = _load_font(11)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
-    device = ili9341(_serial, width=240, height=320, rotate=0)
+    device = ili9341(_serial, width=320, height=240, rotate=1)
 except Exception as e:
     logging.critical("Display init failed: %s", e)
     sys.exit(1)
@@ -374,7 +374,7 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    cx, cy, r = 120, 255, 100
+    cx, cy, r = 160, 210, 85
 
     draw_centered(d, 5,  "PONTOON WIND",         (160, 160, 160), font_title)
     _draw_status_badge(d, 23, msg, frame)
@@ -389,7 +389,7 @@ def render_display(state, frame, needle_gust):
         _draw_trend(d, gx + gtw + 9, 59, trend)
 
     draw_centered(d, 75, f"Wind  {wind:.1f} mph", "white", font_data)
-    _draw_compass(d, device.width - 15, 75, 11, wdir)
+    _draw_compass(d, device.width - 35, 75, 11, wdir)
     _draw_marine_data(d, wtmp, wvht, atmp)
 
     if age is not None:
