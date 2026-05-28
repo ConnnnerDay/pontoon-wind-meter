@@ -370,6 +370,8 @@ def render_display(state, frame, needle_gust):
     gust    = state["gust"]
     wdir    = state["wdir"]
     age     = state["age"]
+    wtmp    = state["wtmp"]
+    wvht    = state["wvht"]
     alerts  = state["alerts"]
     history = state.get("gust_history", [])
 
@@ -379,7 +381,7 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    cx, cy, r = device.width // 2, 130, 90
+    cx, cy, r = device.width // 2, 135, 95
 
     # Compact two-line header: title row + wind row, both 12 pt
     draw_centered(d, 2, "PONTOON WIND", (190, 190, 190), font_label)
@@ -403,8 +405,13 @@ def render_display(state, frame, needle_gust):
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
-    # Status badge below the arc opening
-    _draw_status_badge(d, int(cy + r * 0.707) + 8, msg, frame, font=font_data, bh=16)
+    # Info row in the horseshoe opening: status left, water center, waves right
+    y_info = int(cy + r * 0.707) + 3
+    d.text((8, y_info), msg, fill=accent, font=font_label)
+    if wtmp is not None:
+        d.text((cx, y_info), f"Water {wtmp:.0f}°", fill=(135, 135, 135), font=font_label, anchor="mt")
+    if wvht is not None:
+        d.text((device.width - 8, y_info), f"{wvht:.1f}ft", fill=(135, 135, 135), font=font_label, anchor="ra")
 
     _draw_alert_strip(d, alerts, frame, accent, y0=device.height - 18)
 
