@@ -379,34 +379,32 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    cx, cy, r = device.width // 2, 130, 78
+    cx, cy, r = device.width // 2, 130, 90
 
-    # Title
-    draw_centered(d, 3, "PONTOON WIND", (210, 210, 210), font_title)
+    # Compact two-line header: title row + wind row, both 12 pt
+    draw_centered(d, 2, "PONTOON WIND", (190, 190, 190), font_label)
 
-    # Age indicator top-right
     if age is not None:
-        age_color = _YELLOW if age >= STALE_MINUTES else (150, 150, 150)
+        age_color = _YELLOW if age >= STALE_MINUTES else (130, 130, 130)
         age_str = f"{age}m"
         aw = d.textlength(age_str, font=font_label)
-        d.text((int(device.width - aw - 5), 5), age_str, fill=age_color, font=font_label)
+        d.text((int(device.width - aw - 4), 2), age_str, fill=age_color, font=font_label)
 
-    # Wind speed + trend + compass
     wind_str = f"Wind  {wind:.1f} mph"
     wtw = int(d.textlength(wind_str, font=font_label))
     wx  = (device.width - wtw) // 2
-    d.text((wx, 22), wind_str, fill=(170, 170, 170), font=font_label)
+    d.text((wx, 15), wind_str, fill=(155, 155, 155), font=font_label)
     trend = _trend(history)
     if trend is not None:
-        _draw_trend(d, wx + wtw + 9, 23, trend)
-    _draw_compass(d, device.width - 28, 27, 10, wdir)
+        _draw_trend(d, wx + wtw + 9, 16, trend)
+    _draw_compass(d, device.width - 28, 21, 10, wdir)
 
     # Horseshoe gauge (gust value displayed inside)
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
     # Status badge below the arc opening
-    _draw_status_badge(d, int(cy + r * 0.707) + 8, msg, frame, font=font_data, bh=20)
+    _draw_status_badge(d, int(cy + r * 0.707) + 8, msg, frame, font=font_data, bh=16)
 
     _draw_alert_strip(d, alerts, frame, accent, y0=device.height - 18)
 
