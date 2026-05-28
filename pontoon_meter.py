@@ -310,6 +310,9 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
     d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END,  fill=_dim(_YELLOW, dim), width=16)
     d.arc(box, CAUTION_ARC_END, arc_end,          fill=_dim(_RED,    dim), width=16)
 
+    # Animated wind streaks flowing inside the arc face
+    _draw_wind_streaks(d, cx, cy, r, actual_gust, frame)
+
     # Tick marks
     tick_outer = r - 8
     tick_inner = r - 18
@@ -390,14 +393,18 @@ def render_display(state, frame, needle_gust):
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
-    # Title + wind drawn INSIDE the gauge face at the top
+    # Compass rose — small, left of gust center, inside gauge face
+    _draw_compass(d, cx - 44, cy - 24, 11, wdir)
+
+    # Title + wind/gust drawn INSIDE the gauge face at the top
     title_y = cy - r + 24
     wind_y  = title_y + 15
     draw_centered(d, title_y, "PONTOON WIND", (155, 155, 155), font_label)
-    wind_str = f"Wind  {wind:.1f} mph  {wdir}"
+    # Show both sustained wind and peak gust on the same line
+    wind_str = f"Wind {wind:.1f}  Gust {gust:.1f} mph"
     wtw = int(d.textlength(wind_str, font=font_label))
     wx  = (device.width - wtw) // 2
-    d.text((wx, wind_y), wind_str, fill=(130, 130, 130), font=font_label)
+    d.text((wx, wind_y), wind_str, fill=(180, 180, 180), font=font_label)
     trend = _trend(history)
     if trend is not None:
         _draw_trend(d, wx + wtw + 9, wind_y + 1, trend)
@@ -418,6 +425,8 @@ def render_display(state, frame, needle_gust):
     if marine_parts:
         draw_centered(d, cy + 48, "  ".join(marine_parts), (120, 120, 120), font_label)
 
+    # Bottom strip: NOAA weather advisories (cycles through active alerts)
+    # or a scrolling wave animation with clock when no alerts are active
     _draw_alert_strip(d, alerts, frame, accent, y0=device.height - 18)
 
     device.display(img)
