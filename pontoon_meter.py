@@ -26,9 +26,13 @@ GOOD_MPH        = 12
 CAUTION_MPH     = 18
 STALE_MINUTES   = 90
 
+# Gauge arc geometry — horseshoe opening at the bottom (PIL degrees)
+_GAUGE_ARC_START = 135   # lower-left (0 mph)
+_GAUGE_ARC_SWEEP = 270   # clockwise to lower-right (GAUGE_MAX mph)
+
 # Arc boundary angles (PIL degrees, precomputed from thresholds)
-GOOD_ARC_END    = round(180 + (GOOD_MPH    / GAUGE_MAX) * 180)
-CAUTION_ARC_END = round(180 + (CAUTION_MPH / GAUGE_MAX) * 180)
+GOOD_ARC_END    = round(_GAUGE_ARC_START + (GOOD_MPH    / GAUGE_MAX) * _GAUGE_ARC_SWEEP)
+CAUTION_ARC_END = round(_GAUGE_ARC_START + (CAUTION_MPH / GAUGE_MAX) * _GAUGE_ARC_SWEEP)
 
 # Colors
 _GREEN  = (0, 160, 70)
@@ -67,6 +71,7 @@ font_status = _load_font(22)
 font_data   = _load_font(14)
 font_label  = _load_font(12)
 font_gauge  = _load_font(13)
+font_big    = _load_font(30)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -107,18 +112,21 @@ def _fit_text(d, text, font, max_w):
     return text[:-1] + "…"
 
 
-def _draw_status_badge(d, y, msg, frame):
+def _draw_status_badge(d, y, msg, frame, font=None, bh=None):
     """Rounded-rectangle badge with a sinusoidally pulsing border."""
+    if font is None:
+        font = font_status
+    if bh is None:
+        bh = 30
     accent_base, bg = _STATUS_CONFIG[msg]
     amp = 50 if msg == "TOO WINDY" else 20
     pulse = int(amp * math.sin(frame * math.pi / (FRAME_RATE * 1.2)))
     accent = tuple(min(255, max(0, c + pulse)) for c in accent_base)
-    text_w = d.textlength(msg, font=font_status)
-    bw = max(int(text_w) + 32, 150)
+    text_w = d.textlength(msg, font=font)
+    bw = max(int(text_w) + 24, 120)
     bx = int((device.width - bw) / 2)
-    bh = 30
     d.rounded_rectangle([bx, y, bx + bw, y + bh], radius=6, fill=bg, outline=accent, width=2)
-    d.text((device.width // 2, y + bh // 2), msg, fill="white", font=font_status, anchor="mm")
+    d.text((device.width // 2, y + bh // 2), msg, fill="white", font=font, anchor="mm")
 
 
 def _trend(history):
@@ -230,15 +238,15 @@ def _draw_marine_wave(d, frame, color, y_mid):
         prev = (x, y)
 
 
-def _draw_marine_data(d, wtmp, wvht, atmp):
-    """Water temp (left), air temp (center), wave height (right) at y=88."""
+def _draw_marine_data(d, wtmp, wvht, atmp, y=88):
+    """Water temp (left), air temp (center), wave height (right)."""
     if wtmp is not None:
-        d.text((12, 88), f"Water {wtmp:.0f}°F", fill=(150, 150, 150), font=font_label)
+        d.text((12, y), f"Water {wtmp:.0f}°F", fill=(150, 150, 150), font=font_label)
     if atmp is not None:
-        d.text((device.width // 2, 88), f"Air {atmp:.0f}°F",
+        d.text((device.width // 2, y), f"Air {atmp:.0f}°F",
                fill=(140, 140, 140), font=font_label, anchor="mt")
     if wvht is not None:
-        d.text((device.width - 12, 88), f"Waves {wvht:.1f}ft",
+        d.text((device.width - 12, y), f"Waves {wvht:.1f}ft",
                fill=(150, 150, 150), font=font_label, anchor="ra")
 
 
@@ -283,62 +291,66 @@ def _dim(color, factor):
     return tuple(max(0, min(255, int(c * factor))) for c in color)
 
 
+def _gauge_ang(mph_val):
+    """PIL angle (radians) for a given mph value on the horseshoe arc."""
+    return math.radians(_GAUGE_ARC_START + (mph_val / GAUGE_MAX) * _GAUGE_ARC_SWEEP)
+
+
 def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
-    """Draw the backing arc, colored zones, tick marks, scale labels, wind streaks, and needle.
-
-    When stale=True the arc zones are dimmed and animated streaks are suppressed
-    to communicate that the underlying data is old.
-    """
+    """270-degree horseshoe gauge: arc opens at the bottom, value displayed in center."""
     box = (cx - r, cy - r, cx + r, cy + r)
+    arc_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
 
-    _draw_speed_lines(d, cx, cy, r)
+    # Dark backing arc
+    d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(30, 30, 30), width=22)
 
-    # Dark channel arc (slightly wider → thin dark border around the zones)
-    d.arc(box, 178, 362, fill=(30, 30, 30), width=22)
-
-    # Colored zone arcs — dimmed to ~30 % when data is stale
+    # Colored zone arcs
     dim = 0.30 if stale else 1.0
-    d.arc(box, 180,             GOOD_ARC_END,    fill=_dim(_GREEN,  dim), width=16)
-    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END, fill=_dim(_YELLOW, dim), width=16)
-    d.arc(box, CAUTION_ARC_END, 360,             fill=_dim(_RED,    dim), width=16)
+    d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,    fill=_dim(_GREEN,  dim), width=16)
+    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END,  fill=_dim(_YELLOW, dim), width=16)
+    d.arc(box, CAUTION_ARC_END, arc_end,          fill=_dim(_RED,    dim), width=16)
 
-    if not stale:
-        _draw_wind_streaks(d, cx, cy, r, actual_gust, frame)
-
-    # Tick marks at every 5 mph, drawn just inside the arc inner edge
+    # Tick marks
     tick_outer = r - 8
     tick_inner = r - 18
     for mph_val in range(0, GAUGE_MAX + 1, 5):
-        ang = math.pi * (1 - mph_val / GAUGE_MAX)
+        ang = _gauge_ang(mph_val)
         ca, sa = math.cos(ang), math.sin(ang)
-        x1, y1 = cx + tick_outer * ca, cy - tick_outer * sa
-        x2, y2 = cx + tick_inner * ca, cy - tick_inner * sa
+        x1, y1 = cx + tick_outer * ca, cy + tick_outer * sa
+        x2, y2 = cx + tick_inner * ca, cy + tick_inner * sa
         is_major = (mph_val % 10 == 0) or mph_val == GAUGE_MAX
         d.line([(int(x1), int(y1)), (int(x2), int(y2))],
                fill=(220, 220, 220) if is_major else (160, 160, 160),
                width=2 if is_major else 1)
 
-    # Scale labels at zone boundaries — positions computed from gauge geometry
-    label_r = r - 28
+    # Scale labels just inside the arc
+    label_r = r - 22
     for mph_val, label in [(0, "0"), (GOOD_MPH, str(GOOD_MPH)),
                             (CAUTION_MPH, str(CAUTION_MPH)), (GAUGE_MAX, str(GAUGE_MAX))]:
-        ang = math.pi * (1 - mph_val / GAUGE_MAX)
+        ang = _gauge_ang(mph_val)
         lx = int(cx + label_r * math.cos(ang))
-        ly = int(cy - label_r * math.sin(ang))
+        ly = int(cy + label_r * math.sin(ang))
         d.text((lx, ly), label, fill=(230, 230, 230), font=font_gauge, anchor="mm")
 
-    # Kite-shaped needle — position driven by smoothed needle_gust; greyed out when stale
-    pct  = min(max(needle_gust / GAUGE_MAX, 0), 1)
-    ang  = math.pi * (1 - pct)
-    perp = ang + math.pi / 2
+    # Large gust value in the center — positioned to clear the hub ring (cy±11)
+    if stale:
+        d.text((cx, cy - 15), "STALE", fill=(80, 80, 80), font=font_status, anchor="mm")
+    else:
+        d.text((cx, cy - 22), f"{actual_gust:.1f}", fill=(240, 240, 240), font=font_big, anchor="mm")
+        d.text((cx, cy + 22), "mph gust", fill=(140, 140, 140), font=font_label, anchor="mm")
+
+    # Kite-shaped needle
+    pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
+    ang = _gauge_ang(pct * GAUGE_MAX)
     ca, sa = math.cos(ang), math.sin(ang)
+    perp = ang - math.pi / 2
     cp, sp = math.cos(perp), math.sin(perp)
-    tip   = (cx + r  * ca,  cy - r  * sa)
-    wide  = (cx + 8  * ca,  cy - 8  * sa)
-    tail  = (cx - 14 * ca,  cy + 14 * sa)
+    tip   = (cx + r  * ca,  cy + r  * sa)
+    wide  = (cx + 8  * ca,  cy + 8  * sa)
+    tail  = (cx - 14 * ca,  cy - 14 * sa)
     hw = 5.5
-    left  = (wide[0] + hw * cp, wide[1] - hw * sp)
-    right = (wide[0] - hw * cp, wide[1] + hw * sp)
+    left  = (wide[0] + hw * cp, wide[1] + hw * sp)
+    right = (wide[0] - hw * cp, wide[1] - hw * sp)
     needle_fill = (90, 90, 90) if stale else (240, 240, 240)
     d.polygon(
         [(int(tip[0]),   int(tip[1])),
@@ -348,11 +360,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
         fill=needle_fill,
     )
 
-    # Stale data watermark — centered in the arc face
-    if stale:
-        d.text((cx, cy - r // 2), "STALE", fill=(52, 52, 52), font=font_status, anchor="mm")
-
-    # Pivot hub: dark ring with subtle outline, bright centre dot
+    # Pivot hub
     d.ellipse((cx - 11, cy - 11, cx + 11, cy + 11), fill=(28, 28, 28), outline=(90, 90, 90), width=1)
     d.ellipse((cx -  5, cy -  5, cx +  5, cy +  5), fill=(210, 210, 210))
 
@@ -362,9 +370,6 @@ def render_display(state, frame, needle_gust):
     gust    = state["gust"]
     wdir    = state["wdir"]
     age     = state["age"]
-    wtmp    = state["wtmp"]
-    wvht    = state["wvht"]
-    atmp    = state.get("atmp")
     alerts  = state["alerts"]
     history = state.get("gust_history", [])
 
@@ -374,33 +379,36 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    cx, cy, r = device.width // 2, 225, 110
+    cx, cy, r = device.width // 2, 130, 78
 
-    draw_centered(d, 5,  "PONTOON WIND",         (210, 210, 210), font_title)
-    _draw_status_badge(d, 23, msg, frame)
+    # Title
+    draw_centered(d, 3, "PONTOON WIND", (210, 210, 210), font_title)
 
-    # Gust: colored in status accent, with trend indicator to its right
-    gust_str = f"Gust  {gust:.1f} mph"
-    gtw = int(d.textlength(gust_str, font=font_data))
-    gx  = (device.width - gtw) // 2
-    d.text((gx, 58), gust_str, fill=accent, font=font_data)
-    trend = _trend(history)
-    if trend is not None:
-        _draw_trend(d, gx + gtw + 9, 59, trend)
-
-    draw_centered(d, 75, f"Wind  {wind:.1f} mph", "white", font_data)
-    _draw_compass(d, device.width - 35, 75, 11, wdir)
-    _draw_marine_data(d, wtmp, wvht, atmp)
-
+    # Age indicator top-right
     if age is not None:
         age_color = _YELLOW if age >= STALE_MINUTES else (150, 150, 150)
         age_str = f"{age}m"
-        w = d.textlength(age_str, font=font_label)
-        d.text((int(device.width - w - 5), 5), age_str, fill=age_color, font=font_label)
+        aw = d.textlength(age_str, font=font_label)
+        d.text((int(device.width - aw - 5), 5), age_str, fill=age_color, font=font_label)
 
+    # Wind speed + trend + compass
+    wind_str = f"Wind  {wind:.1f} mph"
+    wtw = int(d.textlength(wind_str, font=font_label))
+    wx  = (device.width - wtw) // 2
+    d.text((wx, 22), wind_str, fill=(170, 170, 170), font=font_label)
+    trend = _trend(history)
+    if trend is not None:
+        _draw_trend(d, wx + wtw + 9, 23, trend)
+    _draw_compass(d, device.width - 28, 27, 10, wdir)
+
+    # Horseshoe gauge (gust value displayed inside)
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
-    _draw_alert_strip(d, alerts, frame, accent, y0=cy + 14)
+
+    # Status badge below the arc opening
+    _draw_status_badge(d, int(cy + r * 0.707) + 8, msg, frame, font=font_data, bh=20)
+
+    _draw_alert_strip(d, alerts, frame, accent, y0=device.height - 18)
 
     device.display(img)
 
