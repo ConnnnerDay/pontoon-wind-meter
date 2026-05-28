@@ -82,6 +82,9 @@ _state = {
     "alerts": [], "error": None,
 }
 
+# Animation-loop-only state (not shared; no lock needed)
+_needle_gust = 0.0   # smoothed gust value driving the needle
+
 
 def make_image():
     img = Image.new("RGB", device.size, "black")
@@ -114,6 +117,59 @@ def _draw_status_badge(d, y, msg, frame):
     bh = 30
     d.rounded_rectangle([bx, y, bx + bw, y + bh], radius=6, fill=bg, outline=accent, width=2)
     d.text((device.width // 2, y + bh // 2), msg, fill="white", font=font_status, anchor="mm")
+
+
+def _draw_speed_lines(d, cx, cy, r):
+    """Very faint radial lines spanning the gauge face — speedometer texture."""
+    inner  = 18
+    outer  = r - 26
+    n      = 24
+    for i in range(n + 1):
+        ang = math.pi * i / n
+        ca, sa = math.cos(ang), math.sin(ang)
+        d.line([(int(cx + inner * ca), int(cy - inner * sa)),
+                (int(cx + outer * ca), int(cy - outer * sa))],
+               fill=(14, 14, 14), width=1)
+
+
+def _draw_compass(d, cx, cy, r, wdir_str):
+    """Compact compass rose: dim circle, N tick, and a filled directional arrow."""
+    _dir_deg = {"N": 0, "NE": 45, "E": 90, "SE": 135,
+                "S": 180, "SW": 225, "W": 270, "NW": 315}
+
+    d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(48, 48, 48), width=1)
+    # North tick — tiny mark at the top of the circle
+    d.line([(cx, cy - r + 1), (cx, cy - r + 4)], fill=(62, 62, 62), width=1)
+
+    deg = _dir_deg.get(wdir_str)
+    if deg is None:
+        d.text((cx, cy), "?", fill=(50, 50, 50), font=font_label, anchor="mm")
+        return
+
+    rad = math.radians(deg)
+    sin_r, cos_r = math.sin(rad), math.cos(rad)
+
+    # Arrow tip points where wind comes FROM (meteorological convention)
+    tip_x = cx + (r - 2) * sin_r
+    tip_y = cy - (r - 2) * cos_r
+    # Arrowhead base sits 40 % of the way from center toward tip
+    base_x = cx + (r * 0.38) * sin_r
+    base_y = cy - (r * 0.38) * cos_r
+    # Perpendicular half-width for the triangular head
+    hw   = 3.0
+    pr   = rad + math.pi / 2
+    l_x  = base_x + hw * math.sin(pr);  l_y  = base_y - hw * math.cos(pr)
+    rr_x = base_x - hw * math.sin(pr);  rr_y = base_y + hw * math.cos(pr)
+    # Stem tail extends to the opposite side (shorter)
+    tail_x = cx - (r - 5) * sin_r
+    tail_y = cy + (r - 5) * cos_r
+
+    d.polygon([(int(tip_x), int(tip_y)), (int(l_x), int(l_y)),
+               (int(rr_x), int(rr_y))], fill=(185, 185, 185))
+    d.line([(int(base_x), int(base_y)), (int(tail_x), int(tail_y))],
+           fill=(105, 105, 105), width=1)
+    # Abbreviation in the lower half of the circle, dim so arrow reads over it
+    d.text((cx, cy + 3), wdir_str, fill=(58, 58, 58), font=font_label, anchor="mt")
 
 
 def _draw_wind_streaks(d, cx, cy, r, gust, frame):
@@ -191,9 +247,11 @@ def _draw_alert_strip(d, alerts, frame, status_color):
                fill=(65, 65, 65), font=font_label, anchor="lm")
 
 
-def _draw_gauge(d, cx, cy, r, gust, frame):
+def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame):
     """Draw the backing arc, colored zones, tick marks, scale labels, wind streaks, and needle."""
     box = (cx - r, cy - r, cx + r, cy + r)
+
+    _draw_speed_lines(d, cx, cy, r)
 
     # Dark channel arc (slightly wider → thin dark border around the zones)
     d.arc(box, 178, 362, fill=(30, 30, 30), width=22)
@@ -203,7 +261,7 @@ def _draw_gauge(d, cx, cy, r, gust, frame):
     d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END, fill=_YELLOW, width=16)
     d.arc(box, CAUTION_ARC_END, 360,             fill=_RED,    width=16)
 
-    _draw_wind_streaks(d, cx, cy, r, gust, frame)
+    _draw_wind_streaks(d, cx, cy, r, actual_gust, frame)
 
     # Tick marks at every 5 mph, drawn just inside the arc inner edge
     tick_outer = r - 8
@@ -227,8 +285,8 @@ def _draw_gauge(d, cx, cy, r, gust, frame):
         ly = int(cy - label_r * math.sin(ang))
         d.text((lx, ly), label, fill=(150, 150, 150), font=font_label, anchor="mm")
 
-    # Kite-shaped needle
-    pct  = min(max(gust / GAUGE_MAX, 0), 1)
+    # Kite-shaped needle — position driven by smoothed needle_gust
+    pct  = min(max(needle_gust / GAUGE_MAX, 0), 1)
     ang  = math.pi * (1 - pct)
     perp = ang + math.pi / 2
     ca, sa = math.cos(ang), math.sin(ang)
@@ -252,7 +310,7 @@ def _draw_gauge(d, cx, cy, r, gust, frame):
     d.ellipse((cx -  5, cy -  5, cx +  5, cy +  5), fill=(210, 210, 210))
 
 
-def render_display(state, frame):
+def render_display(state, frame, needle_gust):
     wind   = state["wind"]
     gust   = state["gust"]
     wdir   = state["wdir"]
@@ -269,10 +327,12 @@ def render_display(state, frame):
     img, d = make_image()
     cx, cy, r = 160, 205, 112
 
-    draw_centered(d, 5,  "PONTOON WIND",                   (160, 160, 160), font_title)
+    draw_centered(d, 5,  "PONTOON WIND",              (160, 160, 160), font_title)
     _draw_status_badge(d, 23, msg, frame)
-    draw_centered(d, 58, f"Gust  {gust:.1f} mph",          "white", font_data)
-    draw_centered(d, 75, f"Wind  {wind:.1f} mph   {wdir}", "white", font_data)
+    # Gust value colored in the status accent; wind speed in neutral white
+    draw_centered(d, 58, f"Gust  {gust:.1f} mph",     accent, font_data)
+    draw_centered(d, 75, f"Wind  {wind:.1f} mph",      "white", font_data)
+    _draw_compass(d, 285, 75, 11, wdir)
     _draw_marine_data(d, wtmp, wvht)
 
     if age is not None:
@@ -281,7 +341,7 @@ def render_display(state, frame):
         w = d.textlength(age_str, font=font_label)
         d.text((int(device.width - w - 5), 5), age_str, fill=age_color, font=font_label)
 
-    _draw_gauge(d, cx, cy, r, gust, frame)
+    _draw_gauge(d, cx, cy, r, needle_gust, gust, frame)
     _draw_alert_strip(d, alerts, frame, accent)
 
     device.display(img)
@@ -391,6 +451,8 @@ def _data_loop():
 
 
 def main():
+    global _needle_gust
+
     threading.Thread(target=_data_loop, daemon=True).start()
 
     img, d = make_image()
@@ -403,12 +465,14 @@ def main():
         t0 = time.monotonic()
 
         with _lock:
-            snap         = dict(_state)
+            snap           = dict(_state)
             snap["alerts"] = list(_state["alerts"])
 
         if snap["wind"] is not None:
+            # Exponential approach: close 35 % of remaining gap each frame
+            _needle_gust += (snap["gust"] - _needle_gust) * 0.35
             try:
-                render_display(snap, frame)
+                render_display(snap, frame, _needle_gust)
             except Exception:
                 logging.exception("Render failed")
         elif snap["error"] is not None:
