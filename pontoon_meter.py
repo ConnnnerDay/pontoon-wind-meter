@@ -395,13 +395,15 @@ def render_display(state, frame, needle_gust):
         aw = d.textlength(age_str, font=font_label)
         d.text((int(device.width - aw - 5), 24), age_str, fill=age_color, font=font_label)
 
-    # Info row in the horseshoe opening: status · water · waves
-    y_info = int(cy + r * 0.707) + 3
-    d.text((8, y_info), msg, fill=accent, font=font_label)
+    # Status + marine data fill the horseshoe interior below the hub
+    draw_centered(d, cy + 38, msg, accent, font_data)
+    marine_parts = []
     if wtmp is not None:
-        d.text((cx, y_info), f"Water {wtmp:.0f}°", fill=(130, 130, 130), font=font_label, anchor="mt")
+        marine_parts.append(f"Water {wtmp:.0f}°")
     if wvht is not None:
-        d.text((device.width - 8, y_info), f"{wvht:.1f}ft", fill=(130, 130, 130), font=font_label, anchor="ra")
+        marine_parts.append(f"{wvht:.1f}ft")
+    if marine_parts:
+        draw_centered(d, cy + 56, "  ".join(marine_parts), (120, 120, 120), font_label)
 
     _draw_alert_strip(d, alerts, frame, accent, y0=device.height - 18)
 
