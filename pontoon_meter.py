@@ -69,7 +69,7 @@ font_label  = _load_font(11)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
-    device = ili9341(_serial, width=320, height=240, rotate=1)
+    device = ili9341(_serial, width=240, height=320, rotate=0)
 except Exception as e:
     logging.critical("Display init failed: %s", e)
     sys.exit(1)
@@ -218,7 +218,7 @@ def _draw_wind_streaks(d, cx, cy, r, gust, frame):
 
 def _draw_marine_wave(d, frame, color):
     """Scrolling sine wave shown in the bottom strip when no alerts are active."""
-    y_mid      = 231
+    y_mid      = device.height - 9
     amplitude  = 3
     wavelength = 55
     offset     = (frame * 2) % wavelength
@@ -244,8 +244,8 @@ def _draw_marine_data(d, wtmp, wvht, atmp):
 
 def _draw_alert_strip(d, alerts, frame, status_color):
     """Bottom strip: cycles through active NOAA alerts, or shows a marine wave."""
-    y0 = 222
-    d.rectangle([0, y0, device.width - 1, 239], fill=(12, 12, 12))
+    y0 = device.height - 18
+    d.rectangle([0, y0, device.width - 1, device.height - 1], fill=(12, 12, 12))
     d.line([0, y0, device.width, y0], fill=(40, 40, 40))
 
     if not alerts:
@@ -253,7 +253,7 @@ def _draw_alert_strip(d, alerts, frame, status_color):
         _draw_marine_wave(d, frame, wave_color)
         # Overlay local time dimly on the wave
         time_str = time.strftime("%H:%M")
-        d.text((device.width // 2, 231), time_str,
+        d.text((device.width // 2, device.height - 9), time_str,
                fill=(62, 62, 62), font=font_label, anchor="mm")
         return
 
@@ -374,7 +374,7 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    cx, cy, r = 160, 205, 112
+    cx, cy, r = 120, 255, 100
 
     draw_centered(d, 5,  "PONTOON WIND",         (160, 160, 160), font_title)
     _draw_status_badge(d, 23, msg, frame)
@@ -389,7 +389,7 @@ def render_display(state, frame, needle_gust):
         _draw_trend(d, gx + gtw + 9, 59, trend)
 
     draw_centered(d, 75, f"Wind  {wind:.1f} mph", "white", font_data)
-    _draw_compass(d, 285, 75, 11, wdir)
+    _draw_compass(d, device.width - 15, 75, 11, wdir)
     _draw_marine_data(d, wtmp, wvht, atmp)
 
     if age is not None:
