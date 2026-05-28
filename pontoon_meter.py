@@ -217,9 +217,8 @@ def _draw_wind_streaks(d, cx, cy, r, gust, frame):
         d.line([(x1, y1), (x2, y2)], fill=(bright, bright, bright), width=1)
 
 
-def _draw_marine_wave(d, frame, color):
+def _draw_marine_wave(d, frame, color, y_mid):
     """Scrolling sine wave shown in the bottom strip when no alerts are active."""
-    y_mid      = device.height - 9
     amplitude  = 3
     wavelength = 55
     offset     = (frame * 2) % wavelength
@@ -243,18 +242,18 @@ def _draw_marine_data(d, wtmp, wvht, atmp):
                fill=(150, 150, 150), font=font_label, anchor="ra")
 
 
-def _draw_alert_strip(d, alerts, frame, status_color):
-    """Bottom strip: cycles through active NOAA alerts, or shows a marine wave."""
-    y0 = device.height - 18
-    d.rectangle([0, y0, device.width - 1, device.height - 1], fill=(12, 12, 12))
+def _draw_alert_strip(d, alerts, frame, status_color, y0):
+    """Strip just below the gauge: cycles through active NOAA alerts, or shows a marine wave."""
+    y_mid = y0 + 9
+    d.rectangle([0, y0, device.width - 1, y0 + 17], fill=(12, 12, 12))
     d.line([0, y0, device.width, y0], fill=(40, 40, 40))
 
     if not alerts:
         wave_color = tuple(max(0, c // 4) for c in status_color)
-        _draw_marine_wave(d, frame, wave_color)
+        _draw_marine_wave(d, frame, wave_color, y_mid)
         # Overlay local time dimly on the wave
         time_str = time.strftime("%H:%M")
-        d.text((device.width // 2, device.height - 9), time_str,
+        d.text((device.width // 2, y_mid), time_str,
                fill=(62, 62, 62), font=font_label, anchor="mm")
         return
 
@@ -401,7 +400,7 @@ def render_display(state, frame, needle_gust):
 
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
-    _draw_alert_strip(d, alerts, frame, accent)
+    _draw_alert_strip(d, alerts, frame, accent, y0=cy + 14)
 
     device.display(img)
 
