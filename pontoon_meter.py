@@ -319,7 +319,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
                width=2 if is_major else 1)
 
     # Scale labels at zone boundaries — positions computed from gauge geometry
-    label_r = r + 16
+    label_r = r - 28
     for mph_val, label in [(0, "0"), (GOOD_MPH, str(GOOD_MPH)),
                             (CAUTION_MPH, str(CAUTION_MPH)), (GAUGE_MAX, str(GAUGE_MAX))]:
         ang = math.pi * (1 - mph_val / GAUGE_MAX)
@@ -374,7 +374,7 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    cx, cy, r = 160, 210, 85
+    cx, cy, r = 160, 205, 90
 
     draw_centered(d, 5,  "PONTOON WIND",         (160, 160, 160), font_title)
     _draw_status_badge(d, 23, msg, frame)
