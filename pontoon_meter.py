@@ -207,22 +207,46 @@ def _draw_compass(d, cx, cy, r, wdir_str):
 
 def _draw_wind_streaks(d, cx, cy, r, gust, frame):
     """Animated short dashes flowing along the inner gauge face, speed ∝ wind."""
-    speed  = max(2, round(20 - gust * 0.4))   # frames per full sweep
-    inner  = r - 24                             # radius just inside the tick zone
-    n      = 5
+    speed  = max(2, round(20 - gust * 0.4))
+    inner  = r - 24
+    n      = 7
     for i in range(n):
         phase = ((frame // speed + i * (100 // n)) % 100) / 100.0
-        ang   = math.pi * (1 - phase)           # sweeps left→right with gauge
+        ang   = math.pi * (1 - phase)
         ca, sa = math.cos(ang), math.sin(ang)
-        bright = int(35 + 80 * math.sin(phase * math.pi))  # bell-curve fade
+        bright = int(60 + 160 * math.sin(phase * math.pi))   # brighter: 60–220
         perp = ang + math.pi / 2
         cp, sp = math.cos(perp), math.sin(perp)
-        hw = 4
+        hw = 5
         x0 = cx + inner * ca
         y0 = cy - inner * sa
         x1 = int(x0 + hw * cp);  y1 = int(y0 - hw * sp)
         x2 = int(x0 - hw * cp);  y2 = int(y0 + hw * sp)
-        d.line([(x1, y1), (x2, y2)], fill=(bright, bright, bright), width=1)
+        d.line([(x1, y1), (x2, y2)], fill=(bright, bright, bright), width=2)
+
+
+def _draw_weather_icon(d, x, y, status, frame, r=12):
+    """Animated weather-condition icon: sun (GOOD), cloud (CAUTION), lightning (TOO WINDY)."""
+    if status == "GOOD":
+        rot = (frame * 2) % 360
+        for i in range(8):
+            ang = math.radians(rot + i * 45)
+            ca, sa = math.cos(ang), math.sin(ang)
+            x1 = int(x + (r - 4) * ca);  y1 = int(y + (r - 4) * sa)
+            x2 = int(x + r * ca);          y2 = int(y + r * sa)
+            d.line([(x1, y1), (x2, y2)], fill=(220, 180, 0), width=2)
+        disc = r - 5
+        d.ellipse((x - disc, y - disc, x + disc, y + disc), fill=(255, 200, 20))
+    elif status == "CAUTION":
+        pulse = 0.7 + 0.3 * math.sin(frame * math.pi / (FRAME_RATE * 1.5))
+        cc = tuple(int(c * pulse) for c in (145, 160, 175))
+        for bx, by, br in [(-5, 3, 5), (5, 3, 5), (0, -2, 7)]:
+            d.ellipse((x+bx-br, y+by-br, x+bx+br, y+by+br), fill=cc)
+    else:   # TOO WINDY — pulsing lightning bolt
+        pulse = 0.4 + 0.6 * math.sin(frame * math.pi / (FRAME_RATE * 0.5))
+        lc = (int(220 * pulse), int(80 * pulse), 0)
+        d.polygon([(x+3, y-r), (x+4, y+1), (x-2, y+1)], fill=lc)
+        d.polygon([(x-4, y+r), (x-3, y-1), (x+2, y-1)], fill=lc)
 
 
 def _draw_marine_wave(d, frame, color, y_mid):
@@ -250,19 +274,22 @@ def _draw_marine_data(d, wtmp, wvht, atmp, y=88):
                fill=(150, 150, 150), font=font_label, anchor="ra")
 
 
-def _draw_alert_strip(d, alerts, frame, status_color, y0):
-    """Strip just below the gauge: cycles through active NOAA alerts, or shows a marine wave."""
+def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None):
+    """Top strip: cycles through NOAA alerts; when quiet, alternates marine data with clock/wave."""
     y_mid = y0 + 9
     d.rectangle([0, y0, device.width - 1, y0 + 17], fill=(18, 18, 18))
-    d.line([0, y0, device.width, y0], fill=(70, 70, 70))
+    d.line([0, y0 + 17, device.width, y0 + 17], fill=(50, 50, 50))
 
     if not alerts:
         wave_color = tuple(max(0, c // 4) for c in status_color)
-        _draw_marine_wave(d, frame, wave_color, y_mid)
-        # Overlay local time dimly on the wave
-        time_str = time.strftime("%H:%M")
-        d.text((device.width // 2, y_mid), time_str,
-               fill=(110, 110, 110), font=font_label, anchor="mm")
+        # Every 6 s swap between wave+time and marine data (if available)
+        if marine_str and (frame // (FRAME_RATE * 6)) % 2 == 1:
+            d.text((device.width // 2, y_mid), marine_str,
+                   fill=(110, 140, 160), font=font_label, anchor="mm")
+        else:
+            _draw_marine_wave(d, frame, wave_color, y_mid)
+            d.text((device.width // 2, y_mid), time.strftime("%H:%M"),
+                   fill=(110, 110, 110), font=font_label, anchor="mm")
         return
 
     idx = (frame // (FRAME_RATE * 4)) % len(alerts)   # new alert every 4 s
@@ -385,16 +412,17 @@ def render_display(state, frame, needle_gust):
 
     img, d = make_image()
     r  = 108
-    # Push arc endpoints (cy + r*sin(45°)) to just above the NOAA strip
-    cy = device.height - 18 - 4 - int(r * 0.707)
+    # Advisory strip at top (y=0-18); center gauge vertically in remaining space
+    cy = 18 + ((device.height - 18 - (r + 11) - int(r * 0.707)) // 2) + (r + 11)
     cx = device.width // 2
 
     # Draw gauge first
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
-    # Compass rose — small, left of gust center, inside gauge face
-    _draw_compass(d, cx - 44, cy - 24, 11, wdir)
+    # Compass rose right of gust; large weather-condition icon centered below hub
+    _draw_compass(d, cx + 44, cy - 24, 14, wdir)
+    _draw_weather_icon(d, cx, cy + 52, msg, frame, r=22)
 
     # Title + wind/gust drawn INSIDE the gauge face at the top
     title_y = cy - r + 24
@@ -415,19 +443,19 @@ def render_display(state, frame, needle_gust):
         aw = d.textlength(age_str, font=font_label)
         d.text((int(device.width - aw - 5), title_y), age_str, fill=age_color, font=font_label)
 
-    # Status + marine data fill the horseshoe interior below the hub
-    draw_centered(d, cy + 38, msg, accent, font_data)
+    # Status label just below the weather icon (icon is at cy+52±22, so cy+76 clears it)
+    draw_centered(d, cy + 76, msg, accent, font_label)
+
+    # Build marine string; displayed in the advisory strip when no alerts are active
     marine_parts = []
     if wtmp is not None:
         marine_parts.append(f"Water {wtmp:.0f}°")
     if wvht is not None:
         marine_parts.append(f"{wvht:.1f}ft")
-    if marine_parts:
-        draw_centered(d, cy + 48, "  ".join(marine_parts), (120, 120, 120), font_label)
+    marine_str = "  ".join(marine_parts) if marine_parts else None
 
-    # Bottom strip: NOAA weather advisories (cycles through active alerts)
-    # or a scrolling wave animation with clock when no alerts are active
-    _draw_alert_strip(d, alerts, frame, accent, y0=device.height - 18)
+    # Top strip: NOAA advisories → cycle through alerts, or alternate wave/marine when clear
+    _draw_alert_strip(d, alerts, frame, accent, y0=0, marine_str=marine_str)
 
     device.display(img)
 
