@@ -67,22 +67,6 @@ These thresholds are experimental and may be adjusted for local ICW conditions. 
 * MicroSD card
 * 5V USB power supply
 
-### Display Pinout
-
-| TFT Pin | Raspberry Pi Pin |
-| ------- | ---------------- |
-| SDO     | GPIO9 / Pin 21   |
-| LED     | 3.3V / Pin 1     |
-| SCK     | GPIO11 / Pin 23  |
-| SDI     | GPIO10 / Pin 19  |
-| DC      | GPIO24 / Pin 18  |
-| RESET   | GPIO25 / Pin 22  |
-| CS      | GPIO8 / Pin 24   |
-| GND     | GND / Pin 6      |
-| VCC     | 3.3V / Pin 17    |
-
-**Important:** use 3.3 V only — do not connect the display to 5 V. SPI must be enabled in `raspi-config`.
-
 ---
 
 ## Setup
@@ -161,23 +145,6 @@ pytest test_ndbc.py -v
 ```
 
 33 tests cover `ms_to_mph`, `celsius_to_f`, `m_to_ft`, `wind_direction`, `parse_ndbc`, and `obs_age_minutes`.
-
----
-
-## Repository Structure
-
-```text
-pontoon-wind-meter/
-├── .gitignore
-├── README.md
-├── ndbc.py               # pure functions: NDBC parsing, unit conversions, data age
-├── pontoon_meter.py      # main display loop (hardware)
-├── requirements.txt      # runtime dependencies
-├── requirements-dev.txt  # test dependencies (pytest)
-├── systemd/
-│   └── pontoon-meter.service
-└── test_ndbc.py          # 33 unit tests for ndbc.py
-```
 
 ---
 
