@@ -245,8 +245,8 @@ def _draw_marine_data(d, wtmp, wvht, atmp):
 def _draw_alert_strip(d, alerts, frame, status_color, y0):
     """Strip just below the gauge: cycles through active NOAA alerts, or shows a marine wave."""
     y_mid = y0 + 9
-    d.rectangle([0, y0, device.width - 1, y0 + 17], fill=(12, 12, 12))
-    d.line([0, y0, device.width, y0], fill=(40, 40, 40))
+    d.rectangle([0, y0, device.width - 1, y0 + 17], fill=(18, 18, 18))
+    d.line([0, y0, device.width, y0], fill=(70, 70, 70))
 
     if not alerts:
         wave_color = tuple(max(0, c // 4) for c in status_color)
@@ -254,7 +254,7 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0):
         # Overlay local time dimly on the wave
         time_str = time.strftime("%H:%M")
         d.text((device.width // 2, y_mid), time_str,
-               fill=(62, 62, 62), font=font_label, anchor="mm")
+               fill=(110, 110, 110), font=font_label, anchor="mm")
         return
 
     idx = (frame // (FRAME_RATE * 4)) % len(alerts)   # new alert every 4 s
@@ -374,7 +374,7 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    cx, cy, r = device.width // 2, 205, 90
+    cx, cy, r = device.width // 2, 225, 110
 
     draw_centered(d, 5,  "PONTOON WIND",         (210, 210, 210), font_title)
     _draw_status_badge(d, 23, msg, frame)
