@@ -1,0 +1,15 @@
+[Unit]
+Description=Pontoon wind meter TFT display
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pizero
+WorkingDirectory=/home/pizero
+ExecStart=/home/pizero/tftenv/bin/python /home/pizero/pontoon_meter.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
