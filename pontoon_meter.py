@@ -62,10 +62,11 @@ def _load_font(size):
         return ImageFont.truetype(_FONT_PATH, size)
     return ImageFont.load_default()
 
-font_title  = _load_font(14)
+font_title  = _load_font(15)
 font_status = _load_font(22)
-font_data   = _load_font(13)
-font_label  = _load_font(11)
+font_data   = _load_font(14)
+font_label  = _load_font(12)
+font_gauge  = _load_font(13)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -233,13 +234,13 @@ def _draw_marine_wave(d, frame, color):
 def _draw_marine_data(d, wtmp, wvht, atmp):
     """Water temp (left), air temp (center), wave height (right) at y=88."""
     if wtmp is not None:
-        d.text((12, 88), f"Water {wtmp:.0f}°F", fill=(90, 90, 90), font=font_label)
+        d.text((12, 88), f"Water {wtmp:.0f}°F", fill=(150, 150, 150), font=font_label)
     if atmp is not None:
         d.text((device.width // 2, 88), f"Air {atmp:.0f}°F",
-               fill=(80, 80, 80), font=font_label, anchor="mt")
+               fill=(140, 140, 140), font=font_label, anchor="mt")
     if wvht is not None:
         d.text((device.width - 12, 88), f"Waves {wvht:.1f}ft",
-               fill=(90, 90, 90), font=font_label, anchor="ra")
+               fill=(150, 150, 150), font=font_label, anchor="ra")
 
 
 def _draw_alert_strip(d, alerts, frame, status_color):
@@ -315,7 +316,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
         x2, y2 = cx + tick_inner * ca, cy - tick_inner * sa
         is_major = (mph_val % 10 == 0) or mph_val == GAUGE_MAX
         d.line([(int(x1), int(y1)), (int(x2), int(y2))],
-               fill=(200, 200, 200) if is_major else (110, 110, 110),
+               fill=(220, 220, 220) if is_major else (160, 160, 160),
                width=2 if is_major else 1)
 
     # Scale labels at zone boundaries — positions computed from gauge geometry
@@ -325,7 +326,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
         ang = math.pi * (1 - mph_val / GAUGE_MAX)
         lx = int(cx + label_r * math.cos(ang))
         ly = int(cy - label_r * math.sin(ang))
-        d.text((lx, ly), label, fill=(150, 150, 150), font=font_label, anchor="mm")
+        d.text((lx, ly), label, fill=(230, 230, 230), font=font_gauge, anchor="mm")
 
     # Kite-shaped needle — position driven by smoothed needle_gust; greyed out when stale
     pct  = min(max(needle_gust / GAUGE_MAX, 0), 1)
@@ -376,7 +377,7 @@ def render_display(state, frame, needle_gust):
     img, d = make_image()
     cx, cy, r = device.width // 2, 205, 90
 
-    draw_centered(d, 5,  "PONTOON WIND",         (160, 160, 160), font_title)
+    draw_centered(d, 5,  "PONTOON WIND",         (210, 210, 210), font_title)
     _draw_status_badge(d, 23, msg, frame)
 
     # Gust: colored in status accent, with trend indicator to its right
@@ -393,7 +394,7 @@ def render_display(state, frame, needle_gust):
     _draw_marine_data(d, wtmp, wvht, atmp)
 
     if age is not None:
-        age_color = _YELLOW if age >= STALE_MINUTES else (100, 100, 100)
+        age_color = _YELLOW if age >= STALE_MINUTES else (150, 150, 150)
         age_str = f"{age}m"
         w = d.textlength(age_str, font=font_label)
         d.text((int(device.width - w - 5), 5), age_str, fill=age_color, font=font_label)
