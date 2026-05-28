@@ -1,39 +1,48 @@
 # Pontoon Wind Meter
 
-A Raspberry Pi Zero 2 W marine conditions display that uses live NOAA buoy data to determine whether conditions are suitable for taking a pontoon boat out on the Intracoastal Waterway near Wilmington, North Carolina.
+A Raspberry Pi Zero 2 W marine conditions display that pulls live NOAA buoy data and shows whether conditions are suitable for taking a pontoon boat out on the Intracoastal Waterway near Wilmington, North Carolina.
 
-The project uses a low-cost SPI TFT display and shows current wind conditions as a green / yellow / red gauge similar to a credit score meter.
+A 2.4" SPI TFT display shows a color-zoned speedometer gauge, current wind and gust speeds, water temperature, wave height, wind direction compass, gust trend arrow, and a scrolling strip for active NOAA weather alerts — all updated live, five frames per second.
 
 ---
 
 ## Features
 
-* Live NOAA / NDBC buoy data (Station 41038, Wrightsville Beach Nearshore, NC)
-* Green / yellow / red safety gauge with needle
-* Wind speed, gust speed, and wind direction display
-* Data age indicator — turns yellow when the reading is older than 90 minutes
-* Arc color zones matched precisely to the GOOD / CAUTION / TOO WINDY thresholds
-* TrueType font rendering (DejaVuSans) with bitmap fallback
-* Auto-retries failed fetches (up to 3 attempts) before showing an error screen
-* Graceful shutdown — clears the display when the service is stopped
-* Auto-starts at boot using systemd
+**Wind & conditions**
+* Live NDBC buoy data — Station 41038, Wrightsville Beach Nearshore, NC, polled every 5 minutes
+* Wind speed and gust speed (m/s → mph), wind direction compass label (N/NE/E/…)
+* Water temperature (°C → °F) and wave height (m → ft)
+* Observation age indicator — turns yellow when the reading is older than 90 minutes
+* Stale-data dimming — when age ≥ 90 min, arc zones drop to 30% brightness and animated streaks stop so the gauge visually communicates uncertainty
+
+**Display**
+* Animated speedometer gauge with green / yellow / red arc zones matching GOOD / CAUTION / TOO WINDY thresholds
+* Smooth exponential needle animation (closes 35% of the gap each frame)
+* Wind streak animation along the inner gauge face — speed proportional to wind gust
+* Radial speed-line texture behind the gauge arc
+* Gust trend indicator (↑ amber / ↓ blue / — grey) based on the 15-minute delta
+* Compact compass rose showing current wind direction
+* Pulsing status badge (GOOD / CAUTION / TOO WINDY)
+
+**Weather alerts**
+* Active NOAA weather alerts fetched every 10 minutes from the Weather.gov API
+* Alert names shown in the bottom strip (truncated to fit the screen), with a pulsing dot colored by severity (Extreme/Severe → red, Moderate → orange, Minor → yellow)
+* Cycles through multiple simultaneous alerts with a page indicator
+* When no alerts are active, the strip shows a scrolling marine wave and the local time
+
+**Architecture**
+* Background data thread refreshes NDBC and NOAA alerts on independent timers; animation loop runs at 5 fps and never blocks on network I/O
+* Thread-safe state snapshot with `threading.Lock()`
+* Auto-retries failed fetches (up to 3 attempts with 5-second back-off)
+* Graceful shutdown — clears display on SIGTERM/SIGINT
+* Startup "Connecting…" screen while waiting for first data
+* Error screen with truncated message if all fetch attempts fail
 * All log output routed to `journalctl`
+
+**Deployment**
+* Systemd service (`After=network-online.target time-sync.target`) with `Restart=always`
 * Headless operation over SSH
-* Runs on a Raspberry Pi Zero 2 W
-
----
-
-## Current Data Source
-
-NOAA / NDBC Station 41038 — Wrightsville Beach Nearshore, NC
-
-The display uses:
-
-* Wind speed (m/s → mph)
-* Wind gust speed (m/s → mph)
-* Wind direction (compass label: N / NE / E / … )
-
-Wind data is retrieved directly from NOAA realtime station text feeds every 5 minutes.
+* TrueType font rendering (DejaVuSans) with bitmap fallback if fonts are unavailable
 
 ---
 
@@ -54,7 +63,7 @@ These thresholds are experimental and may be adjusted for local ICW conditions. 
 ### Main Components
 
 * Raspberry Pi Zero 2 W
-* 2.4" SPI TFT display (ILI9341 controller)
+* 2.4" SPI TFT display (ILI9341 controller, 320×240)
 * MicroSD card
 * 5V USB power supply
 
@@ -102,10 +111,10 @@ sudo apt install -y python3-pip python3-pil python3-numpy python3-rpi.gpio pytho
 ```bash
 python3 -m venv --system-site-packages ~/tftenv
 source ~/tftenv/bin/activate
-pip install luma.core luma.lcd "Pillow>=8.0"
+pip install luma.core luma.lcd "Pillow>=8.2"
 ```
 
-### Deploy the Script
+### Deploy the Scripts
 
 ```bash
 cp pontoon_meter.py ndbc.py ~/
@@ -144,12 +153,14 @@ journalctl -u pontoon-meter.service -f
 
 ## Running Tests
 
-Tests cover the NDBC parsing and conversion functions and run on any machine — no Pi or display hardware required.
+Tests cover NDBC parsing and unit conversion functions and run on any machine — no Pi or display hardware required.
 
 ```bash
 pip install pytest        # or: pip install -r requirements-dev.txt
 pytest test_ndbc.py -v
 ```
+
+33 tests cover `ms_to_mph`, `celsius_to_f`, `m_to_ft`, `wind_direction`, `parse_ndbc`, and `obs_age_minutes`.
 
 ---
 
@@ -159,13 +170,13 @@ pytest test_ndbc.py -v
 pontoon-wind-meter/
 ├── .gitignore
 ├── README.md
-├── ndbc.py               # pure functions: parsing, conversion, data age
+├── ndbc.py               # pure functions: NDBC parsing, unit conversions, data age
 ├── pontoon_meter.py      # main display loop (hardware)
 ├── requirements.txt      # runtime dependencies
-├── requirements-dev.txt  # test dependencies
+├── requirements-dev.txt  # test dependencies (pytest)
 ├── systemd/
 │   └── pontoon-meter.service
-└── test_ndbc.py          # 26 unit tests for ndbc.py
+└── test_ndbc.py          # 33 unit tests for ndbc.py
 ```
 
 ---
@@ -183,15 +194,11 @@ The goal is not to replace official marine forecasts, but to provide a quick vis
 
 ---
 
-## Project Goals
-
-Planned improvements:
+## Planned Improvements
 
 * Touchscreen support
-* NOAA marine forecast integration
 * Tide data
 * Multiple buoy selection
-* Weather alerts
 * Waterproof enclosure
 * Battery-powered portable version
 * Sunlight-readable display options

@@ -275,8 +275,17 @@ def _draw_alert_strip(d, alerts, frame, status_color):
                fill=(65, 65, 65), font=font_label, anchor="lm")
 
 
-def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame):
-    """Draw the backing arc, colored zones, tick marks, scale labels, wind streaks, and needle."""
+def _dim(color, factor):
+    """Multiply each channel of a (R,G,B) tuple by factor (0–1)."""
+    return tuple(max(0, min(255, int(c * factor))) for c in color)
+
+
+def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
+    """Draw the backing arc, colored zones, tick marks, scale labels, wind streaks, and needle.
+
+    When stale=True the arc zones are dimmed and animated streaks are suppressed
+    to communicate that the underlying data is old.
+    """
     box = (cx - r, cy - r, cx + r, cy + r)
 
     _draw_speed_lines(d, cx, cy, r)
@@ -284,12 +293,14 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame):
     # Dark channel arc (slightly wider → thin dark border around the zones)
     d.arc(box, 178, 362, fill=(30, 30, 30), width=22)
 
-    # Colored zone arcs
-    d.arc(box, 180,             GOOD_ARC_END,    fill=_GREEN,  width=16)
-    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END, fill=_YELLOW, width=16)
-    d.arc(box, CAUTION_ARC_END, 360,             fill=_RED,    width=16)
+    # Colored zone arcs — dimmed to ~30 % when data is stale
+    dim = 0.30 if stale else 1.0
+    d.arc(box, 180,             GOOD_ARC_END,    fill=_dim(_GREEN,  dim), width=16)
+    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END, fill=_dim(_YELLOW, dim), width=16)
+    d.arc(box, CAUTION_ARC_END, 360,             fill=_dim(_RED,    dim), width=16)
 
-    _draw_wind_streaks(d, cx, cy, r, actual_gust, frame)
+    if not stale:
+        _draw_wind_streaks(d, cx, cy, r, actual_gust, frame)
 
     # Tick marks at every 5 mph, drawn just inside the arc inner edge
     tick_outer = r - 8
@@ -313,7 +324,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame):
         ly = int(cy - label_r * math.sin(ang))
         d.text((lx, ly), label, fill=(150, 150, 150), font=font_label, anchor="mm")
 
-    # Kite-shaped needle — position driven by smoothed needle_gust
+    # Kite-shaped needle — position driven by smoothed needle_gust; greyed out when stale
     pct  = min(max(needle_gust / GAUGE_MAX, 0), 1)
     ang  = math.pi * (1 - pct)
     perp = ang + math.pi / 2
@@ -325,12 +336,13 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame):
     hw = 5.5
     left  = (wide[0] + hw * cp, wide[1] - hw * sp)
     right = (wide[0] - hw * cp, wide[1] + hw * sp)
+    needle_fill = (90, 90, 90) if stale else (240, 240, 240)
     d.polygon(
         [(int(tip[0]),   int(tip[1])),
          (int(left[0]),  int(left[1])),
          (int(tail[0]),  int(tail[1])),
          (int(right[0]), int(right[1]))],
-        fill=(240, 240, 240),
+        fill=needle_fill,
     )
 
     # Pivot hub: dark ring with subtle outline, bright centre dot
@@ -378,7 +390,8 @@ def render_display(state, frame, needle_gust):
         w = d.textlength(age_str, font=font_label)
         d.text((int(device.width - w - 5), 5), age_str, fill=age_color, font=font_label)
 
-    _draw_gauge(d, cx, cy, r, needle_gust, gust, frame)
+    stale = age is not None and age >= STALE_MINUTES
+    _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
     _draw_alert_strip(d, alerts, frame, accent)
 
     device.display(img)
