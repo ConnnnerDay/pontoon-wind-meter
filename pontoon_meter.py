@@ -15,6 +15,8 @@ GAUGE_MAX = 25      # mph
 GOOD_MPH = 12
 CAUTION_MPH = 18
 
+COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
     device = ili9341(_serial, width=320, height=240, rotate=1)
@@ -41,20 +43,51 @@ def draw_needle(draw, cx, cy, r, val):
     draw.ellipse((cx - 6, cy - 6, cx + 6, cy + 6), fill="white")
 
 
+def wind_direction(deg_str):
+    """Convert NDBC WDIR string (degrees or 'MM'/'999') to compass label."""
+    if deg_str in ("MM", "999"):
+        return "---"
+    return COMPASS[round(int(deg_str) / 45) % 8]
+
+
+def fetch_ndbc():
+    """Fetch NDBC text file with up to 3 attempts on transient errors."""
+    last_exc = None
+    for attempt in range(3):
+        try:
+            with urlopen(URL, timeout=10) as resp:
+                return resp.read().decode()
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                logging.warning("Fetch attempt %d failed: %s", attempt + 1, exc)
+                time.sleep(5)
+    raise last_exc
+
+
+def parse_ndbc(txt):
+    """Return the most recent observation as a column-name → value dict."""
+    lines = txt.splitlines()
+    header_line = next((l for l in lines if l.startswith("#YY")), None)
+    if header_line is None:
+        raise ValueError("NDBC header row not found")
+    cols = header_line.lstrip("#").split()
+    data_line = next((l for l in lines if l.strip() and not l.startswith("#")), None)
+    if data_line is None:
+        raise ValueError("No NDBC data rows found")
+    return dict(zip(cols, data_line.split()))
+
+
 while True:
     try:
-        with urlopen(URL, timeout=10) as resp:
-            txt = resp.read().decode()
-        lines = [line.split() for line in txt.splitlines() if line.strip()]
-        if len(lines) < 3:
-            raise ValueError(f"Unexpected NDBC response ({len(lines)} lines)")
-        row = dict(zip(lines[0], lines[2]))
+        row = parse_ndbc(fetch_ndbc())
 
         if row.get("WSPD", "MM") == "MM":
             raise ValueError("WSPD reading unavailable")
         wind = ms_to_mph(float(row["WSPD"]))
         gust_raw = row.get("GST", "MM")
         gust = ms_to_mph(float(gust_raw)) if gust_raw != "MM" else wind
+        wdir = wind_direction(row.get("WDIR", "MM"))
 
         if gust < GOOD_MPH:
             msg, msg_color = "GOOD", "green"
@@ -70,7 +103,7 @@ while True:
         d.text((78, 8), "PONTOON WIND", fill="white")
         d.text((105, 30), msg, fill=msg_color)
         d.text((80, 52), f"Gust {gust:.1f} mph", fill="white")
-        d.text((85, 70), f"Wind {wind:.1f} mph", fill="white")
+        d.text((85, 70), f"Wind {wind:.1f} mph  {wdir}", fill="white")
 
         good_arc_end = round(180 + (GOOD_MPH / GAUGE_MAX) * 180)
         caution_arc_end = round(180 + (CAUTION_MPH / GAUGE_MAX) * 180)
@@ -85,7 +118,7 @@ while True:
         d.text((275, 200), str(GAUGE_MAX), fill="white")
 
         device.display(img)
-        logging.info("wind=%.1f mph gust=%.1f mph status=%s", wind, gust, msg)
+        logging.info("wind=%.1f mph gust=%.1f mph dir=%s status=%s", wind, gust, wdir, msg)
 
     except Exception as e:
         logging.error("Update failed: %s", e)

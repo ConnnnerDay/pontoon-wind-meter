@@ -10,6 +10,11 @@ WorkingDirectory=/home/pizero
 ExecStart=/home/pizero/tftenv/bin/python /home/pizero/pontoon_meter.py
 Restart=always
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+TimeoutStartSec=30
+TimeoutStopSec=5
 
 [Install]
 WantedBy=multi-user.target
