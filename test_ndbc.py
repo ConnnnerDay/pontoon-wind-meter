@@ -2,7 +2,7 @@
 import pytest
 from datetime import datetime, timezone, timedelta
 
-from ndbc import ms_to_mph, wind_direction, parse_ndbc, obs_age_minutes
+from ndbc import ms_to_mph, celsius_to_f, m_to_ft, wind_direction, parse_ndbc, obs_age_minutes
 
 # Minimal realistic NDBC realtime2 sample
 SAMPLE = """\
@@ -33,6 +33,39 @@ def test_ms_to_mph_zero():
 def test_ms_to_mph_scale():
     # 10 m/s should be ~22.37 mph
     assert abs(ms_to_mph(10.0) - 22.3694) < 1e-6
+
+
+# --- celsius_to_f ---
+
+def test_celsius_to_f_freezing():
+    assert celsius_to_f(0) == 32.0
+
+
+def test_celsius_to_f_boiling():
+    assert abs(celsius_to_f(100) - 212.0) < 1e-9
+
+
+def test_celsius_to_f_body_temp():
+    assert abs(celsius_to_f(37) - 98.6) < 0.01
+
+
+def test_celsius_to_f_negative():
+    assert celsius_to_f(-40) == -40.0   # -40 is the crossover
+
+
+# --- m_to_ft ---
+
+def test_m_to_ft_unit():
+    assert abs(m_to_ft(1.0) - 3.28084) < 1e-9
+
+
+def test_m_to_ft_zero():
+    assert m_to_ft(0) == 0
+
+
+def test_m_to_ft_scale():
+    # 10 m ≈ 32.8 ft
+    assert abs(m_to_ft(10.0) - 32.8084) < 1e-6
 
 
 # --- wind_direction ---

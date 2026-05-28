@@ -3,12 +3,23 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 MS_TO_MPH = 2.23694
+M_TO_FT   = 3.28084
 _COMPASS: list[str] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
 
 
 def ms_to_mph(ms: float) -> float:
     """Convert metres per second to miles per hour."""
     return ms * MS_TO_MPH
+
+
+def celsius_to_f(c: float) -> float:
+    """Convert Celsius to Fahrenheit."""
+    return c * 9 / 5 + 32
+
+
+def m_to_ft(m: float) -> float:
+    """Convert metres to feet."""
+    return m * M_TO_FT
 
 
 def wind_direction(deg_str: str) -> str:

@@ -12,7 +12,7 @@ import textwrap
 import threading
 import time
 
-from ndbc import ms_to_mph, wind_direction, parse_ndbc, obs_age_minutes
+from ndbc import ms_to_mph, celsius_to_f, m_to_ft, wind_direction, parse_ndbc, obs_age_minutes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -78,7 +78,8 @@ except Exception as e:
 _lock  = threading.Lock()
 _state = {
     "wind": None, "gust": None, "wdir": "---",
-    "age": None, "alerts": [], "error": None,
+    "age": None, "wtmp": None, "wvht": None,
+    "alerts": [], "error": None,
 }
 
 
@@ -135,17 +136,43 @@ def _draw_wind_streaks(d, cx, cy, r, gust, frame):
         d.line([(x1, y1), (x2, y2)], fill=(bright, bright, bright), width=1)
 
 
-def _draw_alert_strip(d, alerts, frame):
-    """Bottom strip cycling through active NOAA weather alerts."""
-    if not alerts:
-        return
-    idx = (frame // (FRAME_RATE * 4)) % len(alerts)   # new alert every 4 s
-    name, severity = alerts[idx]
-    color = _ALERT_COLORS.get(severity, _YELLOW)
+def _draw_marine_wave(d, frame, color):
+    """Scrolling sine wave shown in the bottom strip when no alerts are active."""
+    y_mid      = 231
+    amplitude  = 3
+    wavelength = 55
+    offset     = (frame * 2) % wavelength
+    prev = None
+    for x in range(device.width + 1):
+        y = y_mid + int(amplitude * math.sin(2 * math.pi * (x + offset) / wavelength))
+        if prev is not None:
+            d.line([prev, (x, y)], fill=color, width=1)
+        prev = (x, y)
 
+
+def _draw_marine_data(d, wtmp, wvht):
+    """Water temp (left) and wave height (right) flanking the gauge top at y=88."""
+    if wtmp is not None:
+        d.text((12, 88), f"Water {wtmp:.0f}°F", fill=(90, 90, 90), font=font_label)
+    if wvht is not None:
+        d.text((device.width - 12, 88), f"Waves {wvht:.1f}ft",
+               fill=(90, 90, 90), font=font_label, anchor="ra")
+
+
+def _draw_alert_strip(d, alerts, frame, status_color):
+    """Bottom strip: cycles through active NOAA alerts, or shows a marine wave."""
     y0 = 222
     d.rectangle([0, y0, device.width - 1, 239], fill=(12, 12, 12))
     d.line([0, y0, device.width, y0], fill=(40, 40, 40))
+
+    if not alerts:
+        wave_color = tuple(max(0, c // 4) for c in status_color)
+        _draw_marine_wave(d, frame, wave_color)
+        return
+
+    idx = (frame // (FRAME_RATE * 4)) % len(alerts)   # new alert every 4 s
+    name, severity = alerts[idx]
+    color = _ALERT_COLORS.get(severity, _YELLOW)
 
     # Pulsing warning dot
     pulse = 0.55 + 0.45 * math.sin(frame * math.pi / (FRAME_RATE * 0.7))
@@ -230,11 +257,14 @@ def render_display(state, frame):
     gust   = state["gust"]
     wdir   = state["wdir"]
     age    = state["age"]
+    wtmp   = state["wtmp"]
+    wvht   = state["wvht"]
     alerts = state["alerts"]
 
-    msg = ("GOOD" if gust < GOOD_MPH
-           else "CAUTION" if gust <= CAUTION_MPH
-           else "TOO WINDY")
+    msg    = ("GOOD" if gust < GOOD_MPH
+              else "CAUTION" if gust <= CAUTION_MPH
+              else "TOO WINDY")
+    accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
     cx, cy, r = 160, 205, 112
@@ -243,6 +273,7 @@ def render_display(state, frame):
     _draw_status_badge(d, 23, msg, frame)
     draw_centered(d, 58, f"Gust  {gust:.1f} mph",          "white", font_data)
     draw_centered(d, 75, f"Wind  {wind:.1f} mph   {wdir}", "white", font_data)
+    _draw_marine_data(d, wtmp, wvht)
 
     if age is not None:
         age_color = _YELLOW if age >= STALE_MINUTES else (100, 100, 100)
@@ -251,7 +282,7 @@ def render_display(state, frame):
         d.text((int(device.width - w - 5), 5), age_str, fill=age_color, font=font_label)
 
     _draw_gauge(d, cx, cy, r, gust, frame)
-    _draw_alert_strip(d, alerts, frame)
+    _draw_alert_strip(d, alerts, frame, accent)
 
     device.display(img)
 
@@ -260,17 +291,26 @@ def fetch_alerts():
     req = Request(ALERTS_URL,
                   headers={"User-Agent": "pontoon-wind-meter/1.0",
                             "Accept": "application/geo+json"})
-    with urlopen(req, timeout=10) as resp:
-        data = json.loads(resp.read().decode())
-    seen, result = set(), []
-    for feat in data.get("features", []):
-        props = feat.get("properties", {})
-        event = props.get("event", "")
-        sev   = props.get("severity", "Unknown")
-        if event and event not in seen:
-            seen.add(event)
-            result.append((event.upper(), sev))
-    return result
+    last_exc = None
+    for attempt in range(3):
+        try:
+            with urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+            seen, result = set(), []
+            for feat in data.get("features", []):
+                props = feat.get("properties", {})
+                event = props.get("event", "")
+                sev   = props.get("severity", "Unknown")
+                if event and event not in seen:
+                    seen.add(event)
+                    result.append((event.upper(), sev))
+            return result
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                logging.warning("Alert fetch attempt %d failed: %s", attempt + 1, exc)
+                time.sleep(5)
+    raise last_exc
 
 
 def handle_exit(sig, _frame):
@@ -317,9 +357,17 @@ def _data_loop():
             gust     = ms_to_mph(float(gust_raw)) if gust_raw != "MM" else wind
             wdir     = wind_direction(row.get("WDIR", "MM"))
             age      = obs_age_minutes(row)
+            wtmp_raw = row.get("WTMP", "MM")
+            wvht_raw = row.get("WVHT", "MM")
+            wtmp = celsius_to_f(float(wtmp_raw)) if wtmp_raw != "MM" else None
+            wvht = m_to_ft(float(wvht_raw))      if wvht_raw != "MM" else None
             with _lock:
-                _state.update(wind=wind, gust=gust, wdir=wdir, age=age, error=None)
-            logging.info("wind=%.1f mph gust=%.1f mph dir=%s age=%sm", wind, gust, wdir, age)
+                _state.update(wind=wind, gust=gust, wdir=wdir, age=age,
+                              wtmp=wtmp, wvht=wvht, error=None)
+            logging.info("wind=%.1f mph gust=%.1f mph dir=%s age=%sm wtmp=%s wvht=%s",
+                         wind, gust, wdir, age,
+                         f"{wtmp:.1f}°F" if wtmp is not None else "MM",
+                         f"{wvht:.1f}ft" if wvht is not None else "MM")
         except Exception as e:
             logging.error("NDBC fetch failed: %s", e)
             with _lock:
