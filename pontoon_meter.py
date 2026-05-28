@@ -276,9 +276,11 @@ def _draw_marine_data(d, wtmp, wvht, atmp, y=88):
 
 def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None):
     """Top strip: cycles through NOAA alerts; when quiet, alternates marine data with clock/wave."""
-    y_mid = y0 + 9
-    d.rectangle([0, y0, device.width - 1, y0 + 17], fill=(18, 18, 18))
-    d.line([0, y0 + 17, device.width, y0 + 17], fill=(50, 50, 50))
+    strip_h = 20
+    y_mid = y0 + strip_h // 2
+    d.rectangle([0, y0, device.width - 1, y0 + strip_h], fill=(18, 18, 18))
+    # Separator line at the BOTTOM of the strip, visually below the advisory text
+    d.line([0, y0 + strip_h, device.width, y0 + strip_h], fill=(65, 65, 65))
 
     if not alerts:
         wave_color = tuple(max(0, c // 4) for c in status_color)
@@ -299,17 +301,17 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None):
     # Pulsing warning dot
     pulse = 0.55 + 0.45 * math.sin(frame * math.pi / (FRAME_RATE * 0.7))
     dot_color = tuple(min(255, int(c * pulse)) for c in color)
-    d.ellipse([7, y0 + 4, 15, y0 + 12], fill=dot_color)
+    d.ellipse([7, y_mid - 5, 15, y_mid + 5], fill=dot_color)
 
     # Alert name, truncated to available width
     text = _fit_text(d, name, font_label, device.width - 26)
-    d.text((21, y0 + 8), text, fill=color, font=font_label, anchor="lm")
+    d.text((21, y_mid), text, fill=color, font=font_label, anchor="lm")
 
     # Page indicator when there are multiple alerts
     if len(alerts) > 1:
         count_str = f"{idx + 1}/{len(alerts)}"
         cw = int(d.textlength(count_str, font=font_label))
-        d.text((device.width - cw - 4, y0 + 8), count_str,
+        d.text((device.width - cw - 4, y_mid), count_str,
                fill=(65, 65, 65), font=font_label, anchor="lm")
 
 
@@ -358,7 +360,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
                           (CAUTION_MPH, str(CAUTION_MPH)), (GAUGE_MAX, str(GAUGE_MAX))]:
         ang = _gauge_ang(mph_val)
         ca, sa = math.cos(ang), math.sin(ang)
-        lbl_r = 55 if sa < -0.1 else 87   # upper half: push toward center
+        lbl_r = 55 if sa < -0.1 else 80   # upper half: push toward center
         lx, ly = cx + lbl_r * ca, cy + lbl_r * sa
         d.text((int(lx), int(ly)), lbl, fill=(180, 180, 180), font=font_label, anchor="mm")
 
@@ -411,9 +413,9 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    r  = 108
-    # Advisory strip at top (y=0-18); center gauge vertically in remaining space
-    cy = 18 + ((device.height - 18 - (r + 11) - int(r * 0.707)) // 2) + (r + 11)
+    r  = 100
+    # Advisory strip occupies y=0-20 with a separator line; gauge starts 14px below that
+    cy = 20 + 14 + (r + 11)   # arc top sits at y=34, clearly below advisory separator
     cx = device.width // 2
 
     # Draw gauge first
