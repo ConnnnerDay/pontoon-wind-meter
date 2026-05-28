@@ -107,18 +107,21 @@ def _fit_text(d, text, font, max_w):
     return text[:-1] + "…"
 
 
-def _draw_status_badge(d, y, msg, frame):
+def _draw_status_badge(d, y, msg, frame, font=None, bh=None):
     """Rounded-rectangle badge with a sinusoidally pulsing border."""
+    if font is None:
+        font = font_status
+    if bh is None:
+        bh = 30
     accent_base, bg = _STATUS_CONFIG[msg]
     amp = 50 if msg == "TOO WINDY" else 20
     pulse = int(amp * math.sin(frame * math.pi / (FRAME_RATE * 1.2)))
     accent = tuple(min(255, max(0, c + pulse)) for c in accent_base)
-    text_w = d.textlength(msg, font=font_status)
-    bw = max(int(text_w) + 32, 150)
+    text_w = d.textlength(msg, font=font)
+    bw = max(int(text_w) + 24, 120)
     bx = int((device.width - bw) / 2)
-    bh = 30
     d.rounded_rectangle([bx, y, bx + bw, y + bh], radius=6, fill=bg, outline=accent, width=2)
-    d.text((device.width // 2, y + bh // 2), msg, fill="white", font=font_status, anchor="mm")
+    d.text((device.width // 2, y + bh // 2), msg, fill="white", font=font, anchor="mm")
 
 
 def _trend(history):
@@ -230,15 +233,15 @@ def _draw_marine_wave(d, frame, color, y_mid):
         prev = (x, y)
 
 
-def _draw_marine_data(d, wtmp, wvht, atmp):
-    """Water temp (left), air temp (center), wave height (right) at y=88."""
+def _draw_marine_data(d, wtmp, wvht, atmp, y=88):
+    """Water temp (left), air temp (center), wave height (right)."""
     if wtmp is not None:
-        d.text((12, 88), f"Water {wtmp:.0f}°F", fill=(150, 150, 150), font=font_label)
+        d.text((12, y), f"Water {wtmp:.0f}°F", fill=(150, 150, 150), font=font_label)
     if atmp is not None:
-        d.text((device.width // 2, 88), f"Air {atmp:.0f}°F",
+        d.text((device.width // 2, y), f"Air {atmp:.0f}°F",
                fill=(140, 140, 140), font=font_label, anchor="mt")
     if wvht is not None:
-        d.text((device.width - 12, 88), f"Waves {wvht:.1f}ft",
+        d.text((device.width - 12, y), f"Waves {wvht:.1f}ft",
                fill=(150, 150, 150), font=font_label, anchor="ra")
 
 
@@ -374,23 +377,22 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    cx, cy, r = device.width // 2, 225, 110
+    cx, cy, r = device.width // 2, 182, 90
 
-    draw_centered(d, 5,  "PONTOON WIND",         (210, 210, 210), font_title)
-    _draw_status_badge(d, 23, msg, frame)
+    draw_centered(d, 5, "PONTOON WIND", (210, 210, 210), font_title)
 
     # Gust: colored in status accent, with trend indicator to its right
     gust_str = f"Gust  {gust:.1f} mph"
     gtw = int(d.textlength(gust_str, font=font_data))
     gx  = (device.width - gtw) // 2
-    d.text((gx, 58), gust_str, fill=accent, font=font_data)
+    d.text((gx, 24), gust_str, fill=accent, font=font_data)
     trend = _trend(history)
     if trend is not None:
-        _draw_trend(d, gx + gtw + 9, 59, trend)
+        _draw_trend(d, gx + gtw + 9, 25, trend)
 
-    draw_centered(d, 75, f"Wind  {wind:.1f} mph", "white", font_data)
-    _draw_compass(d, device.width - 35, 75, 11, wdir)
-    _draw_marine_data(d, wtmp, wvht, atmp)
+    draw_centered(d, 41, f"Wind  {wind:.1f} mph", "white", font_data)
+    _draw_compass(d, device.width - 35, 41, 11, wdir)
+    _draw_marine_data(d, wtmp, wvht, atmp, y=57)
 
     if age is not None:
         age_color = _YELLOW if age >= STALE_MINUTES else (150, 150, 150)
@@ -400,7 +402,11 @@ def render_display(state, frame, needle_gust):
 
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
-    _draw_alert_strip(d, alerts, frame, accent, y0=cy + 14)
+
+    # Status badge below the gauge
+    _draw_status_badge(d, cy + 13, msg, frame, font=font_data, bh=22)
+
+    _draw_alert_strip(d, alerts, frame, accent, y0=device.height - 18)
 
     device.display(img)
 
