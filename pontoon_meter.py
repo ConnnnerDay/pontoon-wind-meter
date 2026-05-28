@@ -323,20 +323,11 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
                fill=(220, 220, 220) if is_major else (160, 160, 160),
                width=2 if is_major else 1)
 
-    # Scale labels just inside the arc
-    label_r = r - 22
-    for mph_val, label in [(0, "0"), (GOOD_MPH, str(GOOD_MPH)),
-                            (CAUTION_MPH, str(CAUTION_MPH)), (GAUGE_MAX, str(GAUGE_MAX))]:
-        ang = _gauge_ang(mph_val)
-        lx = int(cx + label_r * math.cos(ang))
-        ly = int(cy + label_r * math.sin(ang))
-        d.text((lx, ly), label, fill=(230, 230, 230), font=font_gauge, anchor="mm")
-
-    # Large gust value in the center — positioned to clear the hub ring (cy±11)
+    # Large gust value in the center
     if stale:
         d.text((cx, cy - 15), "STALE", fill=(80, 80, 80), font=font_status, anchor="mm")
     else:
-        d.text((cx, cy - 22), f"{actual_gust:.1f}", fill=(240, 240, 240), font=font_big, anchor="mm")
+        d.text((cx, cy - 28), f"{actual_gust:.1f}", fill=(240, 240, 240), font=font_big, anchor="mm")
         d.text((cx, cy + 22), "mph gust", fill=(140, 140, 140), font=font_label, anchor="mm")
 
     # Kite-shaped needle
@@ -381,37 +372,36 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    cx, cy, r = device.width // 2, 135, 95
+    # r=108 puts the arc outer edge 1 px from every screen edge
+    cx, cy, r = device.width // 2, 120, 108
 
-    # Compact two-line header: title row + wind row, both 12 pt
-    draw_centered(d, 2, "PONTOON WIND", (190, 190, 190), font_label)
-
-    if age is not None:
-        age_color = _YELLOW if age >= STALE_MINUTES else (130, 130, 130)
-        age_str = f"{age}m"
-        aw = d.textlength(age_str, font=font_label)
-        d.text((int(device.width - aw - 4), 2), age_str, fill=age_color, font=font_label)
-
-    wind_str = f"Wind  {wind:.1f} mph"
-    wtw = int(d.textlength(wind_str, font=font_label))
-    wx  = (device.width - wtw) // 2
-    d.text((wx, 15), wind_str, fill=(155, 155, 155), font=font_label)
-    trend = _trend(history)
-    if trend is not None:
-        _draw_trend(d, wx + wtw + 9, 16, trend)
-    _draw_compass(d, device.width - 28, 21, 10, wdir)
-
-    # Horseshoe gauge (gust value displayed inside)
+    # Draw gauge first — arc covers y=1..20 at the top, face interior below y=20
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
-    # Info row in the horseshoe opening: status left, water center, waves right
+    # Title + wind drawn INSIDE the gauge face (black interior, y > 20)
+    draw_centered(d, 24, "PONTOON WIND", (155, 155, 155), font_label)
+    wind_str = f"Wind  {wind:.1f} mph  {wdir}"
+    wtw = int(d.textlength(wind_str, font=font_label))
+    wx  = (device.width - wtw) // 2
+    d.text((wx, 39), wind_str, fill=(130, 130, 130), font=font_label)
+    trend = _trend(history)
+    if trend is not None:
+        _draw_trend(d, wx + wtw + 9, 40, trend)
+
+    if age is not None:
+        age_color = _YELLOW if age >= STALE_MINUTES else (115, 115, 115)
+        age_str = f"{age}m"
+        aw = d.textlength(age_str, font=font_label)
+        d.text((int(device.width - aw - 5), 24), age_str, fill=age_color, font=font_label)
+
+    # Info row in the horseshoe opening: status · water · waves
     y_info = int(cy + r * 0.707) + 3
     d.text((8, y_info), msg, fill=accent, font=font_label)
     if wtmp is not None:
-        d.text((cx, y_info), f"Water {wtmp:.0f}°", fill=(135, 135, 135), font=font_label, anchor="mt")
+        d.text((cx, y_info), f"Water {wtmp:.0f}°", fill=(130, 130, 130), font=font_label, anchor="mt")
     if wvht is not None:
-        d.text((device.width - 8, y_info), f"{wvht:.1f}ft", fill=(135, 135, 135), font=font_label, anchor="ra")
+        d.text((device.width - 8, y_info), f"{wvht:.1f}ft", fill=(130, 130, 130), font=font_label, anchor="ra")
 
     _draw_alert_strip(d, alerts, frame, accent, y0=device.height - 18)
 
