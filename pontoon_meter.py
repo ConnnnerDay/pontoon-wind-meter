@@ -274,19 +274,22 @@ def _draw_marine_data(d, wtmp, wvht, atmp, y=88):
                fill=(150, 150, 150), font=font_label, anchor="ra")
 
 
-def _draw_alert_strip(d, alerts, frame, status_color, y0):
-    """Strip just below the gauge: cycles through active NOAA alerts, or shows a marine wave."""
+def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None):
+    """Top strip: cycles through NOAA alerts; when quiet, alternates marine data with clock/wave."""
     y_mid = y0 + 9
     d.rectangle([0, y0, device.width - 1, y0 + 17], fill=(18, 18, 18))
-    d.line([0, y0, device.width, y0], fill=(70, 70, 70))
+    d.line([0, y0 + 17, device.width, y0 + 17], fill=(50, 50, 50))
 
     if not alerts:
         wave_color = tuple(max(0, c // 4) for c in status_color)
-        _draw_marine_wave(d, frame, wave_color, y_mid)
-        # Overlay local time dimly on the wave
-        time_str = time.strftime("%H:%M")
-        d.text((device.width // 2, y_mid), time_str,
-               fill=(110, 110, 110), font=font_label, anchor="mm")
+        # Every 6 s swap between wave+time and marine data (if available)
+        if marine_str and (frame // (FRAME_RATE * 6)) % 2 == 1:
+            d.text((device.width // 2, y_mid), marine_str,
+                   fill=(110, 140, 160), font=font_label, anchor="mm")
+        else:
+            _draw_marine_wave(d, frame, wave_color, y_mid)
+            d.text((device.width // 2, y_mid), time.strftime("%H:%M"),
+                   fill=(110, 110, 110), font=font_label, anchor="mm")
         return
 
     idx = (frame // (FRAME_RATE * 4)) % len(alerts)   # new alert every 4 s
@@ -417,9 +420,9 @@ def render_display(state, frame, needle_gust):
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
-    # Animated weather condition icon (left of gust) and compass rose (right of gust)
-    _draw_weather_icon(d, cx - 50, cy - 15, msg, frame)
+    # Compass rose right of gust; large weather-condition icon centered below hub
     _draw_compass(d, cx + 44, cy - 24, 14, wdir)
+    _draw_weather_icon(d, cx, cy + 52, msg, frame, r=22)
 
     # Title + wind/gust drawn INSIDE the gauge face at the top
     title_y = cy - r + 24
@@ -440,19 +443,19 @@ def render_display(state, frame, needle_gust):
         aw = d.textlength(age_str, font=font_label)
         d.text((int(device.width - aw - 5), title_y), age_str, fill=age_color, font=font_label)
 
-    # Status + marine data fill the horseshoe interior below the hub
-    draw_centered(d, cy + 38, msg, accent, font_data)
+    # Status label just below the weather icon (icon is at cy+52±22, so cy+76 clears it)
+    draw_centered(d, cy + 76, msg, accent, font_label)
+
+    # Build marine string; displayed in the advisory strip when no alerts are active
     marine_parts = []
     if wtmp is not None:
         marine_parts.append(f"Water {wtmp:.0f}°")
     if wvht is not None:
         marine_parts.append(f"{wvht:.1f}ft")
-    if marine_parts:
-        draw_centered(d, cy + 48, "  ".join(marine_parts), (120, 120, 120), font_label)
+    marine_str = "  ".join(marine_parts) if marine_parts else None
 
-    # Top strip: NOAA weather advisories (cycles through active alerts)
-    # or a scrolling wave animation with clock when no alerts are active
-    _draw_alert_strip(d, alerts, frame, accent, y0=0)
+    # Top strip: NOAA advisories → cycle through alerts, or alternate wave/marine when clear
+    _draw_alert_strip(d, alerts, frame, accent, y0=0, marine_str=marine_str)
 
     device.display(img)
 
