@@ -326,7 +326,7 @@ def _gauge_ang(mph_val):
 
 
 def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
-    """270-degree horseshoe gauge: arc opens at the bottom, value displayed in center."""
+    """270-degree horseshoe gauge: arc opens at the bottom; needle, streaks, ticks, labels."""
     box = (cx - r, cy - r, cx + r, cy + r)
     arc_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
 
@@ -360,16 +360,12 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
                           (CAUTION_MPH, str(CAUTION_MPH)), (GAUGE_MAX, str(GAUGE_MAX))]:
         ang = _gauge_ang(mph_val)
         ca, sa = math.cos(ang), math.sin(ang)
-        lbl_r = 55 if sa < -0.1 else 80   # upper half: push toward center
+        lbl_r = 70 if sa < -0.1 else 80
         lx, ly = cx + lbl_r * ca, cy + lbl_r * sa
         d.text((int(lx), int(ly)), lbl, fill=(180, 180, 180), font=font_label, anchor="mm")
 
-    # Large gust value in the center
     if stale:
-        d.text((cx, cy - 15), "STALE", fill=(80, 80, 80), font=font_status, anchor="mm")
-    else:
-        d.text((cx, cy - 28), f"{actual_gust:.1f}", fill=(240, 240, 240), font=font_big, anchor="mm")
-        d.text((cx, cy + 22), "mph gust", fill=(140, 140, 140), font=font_label, anchor="mm")
+        d.text((cx, cy), "STALE", fill=(55, 55, 55), font=font_status, anchor="mm")
 
     # Kite-shaped needle
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
@@ -422,31 +418,37 @@ def render_display(state, frame, needle_gust):
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
-    # Compass rose right of gust; large weather-condition icon centered below hub
+    # Compass rose stays inside the arc (directional indicator, not text)
     _draw_compass(d, cx + 44, cy - 24, 14, wdir)
-    _draw_weather_icon(d, cx, cy + 52, msg, frame, r=22)
 
-    # Title + wind/gust drawn INSIDE the gauge face at the top
-    title_y = cy - r + 24
-    wind_y  = title_y + 15
-    draw_centered(d, title_y, "PONTOON WIND", (155, 155, 155), font_label)
-    # Show both sustained wind and peak gust on the same line
-    wind_str = f"Wind {wind:.1f}  Gust {gust:.1f} mph"
-    wtw = int(d.textlength(wind_str, font=font_label))
-    wx  = (device.width - wtw) // 2
-    d.text((wx, wind_y), wind_str, fill=(180, 180, 180), font=font_label)
+    # Info section below the arc — all text/icons outside the horseshoe
+    info_y = cy + int(r * 0.707) + 8
+    d.line([12, info_y - 4, device.width - 12, info_y - 4], fill=(45, 45, 45))
+
+    # Row 1: weather icon (left) + status text (large, centered)
+    _draw_weather_icon(d, 20, info_y + 17, msg, frame, r=14)
+    d.text((cx + 10, info_y + 17), msg, fill=accent, font=font_big, anchor="mm")
+
+    # Row 2: gust speed (prominent)
+    d.text((cx, info_y + 46), f"Gust {gust:.1f} mph", fill=(220, 220, 220), font=font_status, anchor="mm")
+
+    # Row 3: wind speed + trend arrow
     trend = _trend(history)
+    wind_str = f"Wind {wind:.1f} mph"
+    ww = int(d.textlength(wind_str, font=font_data))
+    wx = (device.width - ww) // 2
+    d.text((wx, info_y + 65), wind_str, fill=(170, 170, 170), font=font_data)
     if trend is not None:
-        _draw_trend(d, wx + wtw + 9, wind_y + 1, trend)
+        _draw_trend(d, wx + ww + 6, info_y + 65, trend)
 
+    # Row 4: direction (left) and data age (right)
+    dir_str = wdir if wdir else "--"
+    d.text((12, info_y + 81), f"From {dir_str}", fill=(125, 125, 125), font=font_label)
     if age is not None:
-        age_color = _YELLOW if age >= STALE_MINUTES else (115, 115, 115)
+        age_color = _YELLOW if age >= STALE_MINUTES else (105, 105, 105)
         age_str = f"{age}m"
-        aw = d.textlength(age_str, font=font_label)
-        d.text((int(device.width - aw - 5), title_y), age_str, fill=age_color, font=font_label)
-
-    # Status label just below the weather icon (icon is at cy+52±22, so cy+76 clears it)
-    draw_centered(d, cy + 76, msg, accent, font_label)
+        aw = int(d.textlength(age_str, font=font_label))
+        d.text((device.width - aw - 6, info_y + 81), age_str, fill=age_color, font=font_label)
 
     # Build marine string; displayed in the advisory strip when no alerts are active
     marine_parts = []
