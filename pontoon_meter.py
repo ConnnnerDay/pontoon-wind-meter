@@ -207,22 +207,46 @@ def _draw_compass(d, cx, cy, r, wdir_str):
 
 def _draw_wind_streaks(d, cx, cy, r, gust, frame):
     """Animated short dashes flowing along the inner gauge face, speed ∝ wind."""
-    speed  = max(2, round(20 - gust * 0.4))   # frames per full sweep
-    inner  = r - 24                             # radius just inside the tick zone
-    n      = 5
+    speed  = max(2, round(20 - gust * 0.4))
+    inner  = r - 24
+    n      = 7
     for i in range(n):
         phase = ((frame // speed + i * (100 // n)) % 100) / 100.0
-        ang   = math.pi * (1 - phase)           # sweeps left→right with gauge
+        ang   = math.pi * (1 - phase)
         ca, sa = math.cos(ang), math.sin(ang)
-        bright = int(35 + 80 * math.sin(phase * math.pi))  # bell-curve fade
+        bright = int(60 + 160 * math.sin(phase * math.pi))   # brighter: 60–220
         perp = ang + math.pi / 2
         cp, sp = math.cos(perp), math.sin(perp)
-        hw = 4
+        hw = 5
         x0 = cx + inner * ca
         y0 = cy - inner * sa
         x1 = int(x0 + hw * cp);  y1 = int(y0 - hw * sp)
         x2 = int(x0 - hw * cp);  y2 = int(y0 + hw * sp)
-        d.line([(x1, y1), (x2, y2)], fill=(bright, bright, bright), width=1)
+        d.line([(x1, y1), (x2, y2)], fill=(bright, bright, bright), width=2)
+
+
+def _draw_weather_icon(d, x, y, status, frame, r=12):
+    """Animated weather-condition icon: sun (GOOD), cloud (CAUTION), lightning (TOO WINDY)."""
+    if status == "GOOD":
+        rot = (frame * 2) % 360
+        for i in range(8):
+            ang = math.radians(rot + i * 45)
+            ca, sa = math.cos(ang), math.sin(ang)
+            x1 = int(x + (r - 4) * ca);  y1 = int(y + (r - 4) * sa)
+            x2 = int(x + r * ca);          y2 = int(y + r * sa)
+            d.line([(x1, y1), (x2, y2)], fill=(220, 180, 0), width=2)
+        disc = r - 5
+        d.ellipse((x - disc, y - disc, x + disc, y + disc), fill=(255, 200, 20))
+    elif status == "CAUTION":
+        pulse = 0.7 + 0.3 * math.sin(frame * math.pi / (FRAME_RATE * 1.5))
+        cc = tuple(int(c * pulse) for c in (145, 160, 175))
+        for bx, by, br in [(-5, 3, 5), (5, 3, 5), (0, -2, 7)]:
+            d.ellipse((x+bx-br, y+by-br, x+bx+br, y+by+br), fill=cc)
+    else:   # TOO WINDY — pulsing lightning bolt
+        pulse = 0.4 + 0.6 * math.sin(frame * math.pi / (FRAME_RATE * 0.5))
+        lc = (int(220 * pulse), int(80 * pulse), 0)
+        d.polygon([(x+3, y-r), (x+4, y+1), (x-2, y+1)], fill=lc)
+        d.polygon([(x-4, y+r), (x-3, y-1), (x+2, y-1)], fill=lc)
 
 
 def _draw_marine_wave(d, frame, color, y_mid):
@@ -385,16 +409,17 @@ def render_display(state, frame, needle_gust):
 
     img, d = make_image()
     r  = 108
-    # Push arc endpoints (cy + r*sin(45°)) to just above the NOAA strip
-    cy = device.height - 18 - 4 - int(r * 0.707)
+    # Advisory strip at top (y=0-18); center gauge vertically in remaining space
+    cy = 18 + ((device.height - 18 - (r + 11) - int(r * 0.707)) // 2) + (r + 11)
     cx = device.width // 2
 
     # Draw gauge first
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
-    # Compass rose — small, left of gust center, inside gauge face
-    _draw_compass(d, cx - 44, cy - 24, 11, wdir)
+    # Animated weather condition icon (left of gust) and compass rose (right of gust)
+    _draw_weather_icon(d, cx - 50, cy - 15, msg, frame)
+    _draw_compass(d, cx + 44, cy - 24, 14, wdir)
 
     # Title + wind/gust drawn INSIDE the gauge face at the top
     title_y = cy - r + 24
@@ -425,9 +450,9 @@ def render_display(state, frame, needle_gust):
     if marine_parts:
         draw_centered(d, cy + 48, "  ".join(marine_parts), (120, 120, 120), font_label)
 
-    # Bottom strip: NOAA weather advisories (cycles through active alerts)
+    # Top strip: NOAA weather advisories (cycles through active alerts)
     # or a scrolling wave animation with clock when no alerts are active
-    _draw_alert_strip(d, alerts, frame, accent, y0=device.height - 18)
+    _draw_alert_strip(d, alerts, frame, accent, y0=0)
 
     device.display(img)
 
