@@ -374,7 +374,7 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    cx, cy, r = 160, 205, 90
+    cx, cy, r = device.width // 2, 205, 90
 
     draw_centered(d, 5,  "PONTOON WIND",         (160, 160, 160), font_title)
     _draw_status_badge(d, 23, msg, frame)
