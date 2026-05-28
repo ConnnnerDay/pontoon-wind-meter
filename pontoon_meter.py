@@ -2,72 +2,99 @@ from luma.core.interface.serial import spi
 from luma.lcd.device import ili9341
 from PIL import Image, ImageDraw
 from urllib.request import urlopen
-import time, math
+import logging
+import math
+import sys
+import time
 
-URL="https://www.ndbc.noaa.gov/data/realtime2/41038.txt"
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-serial=spi(port=0,device=0,gpio_DC=24,gpio_RST=25)
-device=ili9341(serial,width=320,height=240,rotate=1)
+URL = "https://www.ndbc.noaa.gov/data/realtime2/41038.txt"
 
-def mph(k): return k*1.15078
+GAUGE_MAX = 25      # mph
+GOOD_MPH = 12
+CAUTION_MPH = 18
 
-def draw_needle(d,cx,cy,r,val):
-    pct=min(max(val/25,0),1)
-    ang=math.radians(180-(pct*180))
-    x=cx+r*math.cos(ang)
-    y=cy-r*math.sin(ang)
-    d.line((cx,cy,x,y),fill="white",width=4)
-    d.ellipse((cx-6,cy-6,cx+6,cy+6),fill="white")
+try:
+    _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
+    device = ili9341(_serial, width=320, height=240, rotate=1)
+except Exception as e:
+    logging.critical("Display init failed: %s", e)
+    sys.exit(1)
+
+
+def ms_to_mph(ms):
+    return ms * 2.23694
+
+
+def make_image():
+    img = Image.new("RGB", device.size, "black")
+    return img, ImageDraw.Draw(img)
+
+
+def draw_needle(draw, cx, cy, r, val):
+    pct = min(max(val / GAUGE_MAX, 0), 1)
+    ang = math.pi * (1 - pct)
+    x = cx + r * math.cos(ang)
+    y = cy - r * math.sin(ang)
+    draw.line((cx, cy, x, y), fill="white", width=4)
+    draw.ellipse((cx - 6, cy - 6, cx + 6, cy + 6), fill="white")
+
 
 while True:
     try:
-        txt=urlopen(URL,timeout=10).read().decode()
-        lines=[x.split() for x in txt.splitlines() if x.strip()]
-        row=dict(zip(lines[0],lines[2]))
+        with urlopen(URL, timeout=10) as resp:
+            txt = resp.read().decode()
+        lines = [line.split() for line in txt.splitlines() if line.strip()]
+        if len(lines) < 3:
+            raise ValueError(f"Unexpected NDBC response ({len(lines)} lines)")
+        row = dict(zip(lines[0], lines[2]))
 
-        wind=float(row["WSPD"])
-        gust=float(row["GST"]) if row["GST"]!="MM" else wind
-        w=mph(wind)
-        g=mph(gust)
+        if row.get("WSPD", "MM") == "MM":
+            raise ValueError("WSPD reading unavailable")
+        wind = ms_to_mph(float(row["WSPD"]))
+        gust_raw = row.get("GST", "MM")
+        gust = ms_to_mph(float(gust_raw)) if gust_raw != "MM" else wind
 
-        if g < 12:
-            msg="GOOD"
-            msgc="green"
-        elif g <= 18:
-            msg="CAUTION"
-            msgc="yellow"
+        if gust < GOOD_MPH:
+            msg, msg_color = "GOOD", "green"
+        elif gust <= CAUTION_MPH:
+            msg, msg_color = "CAUTION", "yellow"
         else:
-            msg="TOO WINDY"
-            msgc="red"
+            msg, msg_color = "TOO WINDY", "red"
 
-        img=Image.new("RGB",device.size,"black")
-        d=ImageDraw.Draw(img)
+        img, d = make_image()
+        cx, cy, r = 160, 205, 112
+        box = (cx - r, cy - r, cx + r, cy + r)
 
-        cx,cy,r=160,205,112
-        box=(cx-r,cy-r,cx+r,cy+r)
+        d.text((78, 8), "PONTOON WIND", fill="white")
+        d.text((105, 30), msg, fill=msg_color)
+        d.text((80, 52), f"Gust {gust:.1f} mph", fill="white")
+        d.text((85, 70), f"Wind {wind:.1f} mph", fill="white")
 
-        d.text((78,8),"PONTOON WIND",fill="white")
-        d.text((105,30),msg,fill=msgc)
-        d.text((80,52),f"Gust {g:.1f} mph",fill="white")
-        d.text((85,70),f"Wind {w:.1f} mph",fill="white")
+        good_arc_end = round(180 + (GOOD_MPH / GAUGE_MAX) * 180)
+        caution_arc_end = round(180 + (CAUTION_MPH / GAUGE_MAX) * 180)
+        d.arc(box, 180, good_arc_end, fill="green", width=16)
+        d.arc(box, good_arc_end, caution_arc_end, fill="yellow", width=16)
+        d.arc(box, caution_arc_end, 360, fill="red", width=16)
 
-        d.arc(box,180,240,fill="green",width=16)
-        d.arc(box,240,300,fill="yellow",width=16)
-        d.arc(box,300,360,fill="red",width=16)
+        draw_needle(d, cx, cy, r, gust)
 
-        draw_needle(d,cx,cy,82,g)
-
-        d.text((28,200),"0",fill="white")
-        d.text((147,92),"12",fill="white")
-        d.text((275,200),"25",fill="white")
+        d.text((28, 200), "0", fill="white")
+        d.text((147, 92), str(GOOD_MPH), fill="white")
+        d.text((275, 200), str(GAUGE_MAX), fill="white")
 
         device.display(img)
+        logging.info("wind=%.1f mph gust=%.1f mph status=%s", wind, gust, msg)
 
     except Exception as e:
-        img=Image.new("RGB",device.size,"black")
-        d=ImageDraw.Draw(img)
-        d.text((20,20),"ERROR",fill="red")
-        d.text((20,60),str(e)[:30],fill="white")
-        device.display(img)
+        logging.error("Update failed: %s", e)
+        try:
+            img, d = make_image()
+            d.text((20, 20), "ERROR", fill="red")
+            d.text((20, 60), str(e)[:30], fill="white")
+            device.display(img)
+        except Exception:
+            logging.exception("Error screen render failed")
 
     time.sleep(300)

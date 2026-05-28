@@ -188,11 +188,11 @@ journalctl -u pontoon-meter.service -f
 
 Current thresholds:
 
-| Status | Wind Gust   |
-| ------ | ----------- |
-| Green  | Under 10 kt |
-| Yellow | 10–15 kt    |
-| Red    | Over 15 kt  |
+| Status | Wind Gust         |
+| ------ | ----------------- |
+| Green  | Under 12 mph      |
+| Yellow | 12–18 mph         |
+| Red    | Over 18 mph       |
 
 These values are still experimental and may be adjusted for local ICW conditions.
 
