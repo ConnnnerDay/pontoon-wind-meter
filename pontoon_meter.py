@@ -59,18 +59,29 @@ _FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
 ]
+_BOLD_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+]
 _FONT_PATH = next((p for p in _FONT_CANDIDATES if os.path.exists(p)), None)
+_BOLD_PATH = next((p for p in _BOLD_CANDIDATES if os.path.exists(p)), _FONT_PATH)
 
 def _load_font(size):
     if _FONT_PATH:
         return ImageFont.truetype(_FONT_PATH, size)
     return ImageFont.load_default()
 
+def _load_bold(size):
+    if _BOLD_PATH:
+        return ImageFont.truetype(_BOLD_PATH, size)
+    return _load_font(size)
+
 font_title  = _load_font(15)
-font_status = _load_font(38)
+font_status = _load_bold(42)   # gust line — bold for punch
 font_data   = _load_font(22)
 font_label  = _load_font(14)
-font_big    = _load_font(46)
+font_big    = _load_bold(52)   # status word — bold + large
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -509,17 +520,17 @@ def render_display(state, frame, needle_gust):
     # Separator line above info section
     d.line([12, info_y - 4, device.width - 12, info_y - 4], fill=(45, 45, 45))
 
-    # Row 1 (center y=info_y+25): weather icon + status — font_big 46pt
-    _draw_weather_icon(d, 24, info_y + 25, msg, frame, r=22)
-    d.text((cx + 14, info_y + 25), msg, fill=accent, font=font_big, anchor="mm")
+    # Row 1 (center y=info_y+27): weather icon + status — font_big 52pt bold
+    _draw_weather_icon(d, 24, info_y + 27, msg, frame, r=22)
+    d.text((cx + 14, info_y + 27), msg, fill=accent, font=font_big, anchor="mm")
 
-    # Row 2 (center y=info_y+72): gust — font_status 38pt, pulses in accent when high
+    # Row 2 (center y=info_y+75): gust — font_status 42pt bold, pulses in accent when high
     if gust >= CAUTION_MPH:
         gp = 0.55 + 0.45 * math.sin(frame * math.pi / (FRAME_RATE * 1.0))
         gust_fill = tuple(min(255, int(c * gp)) for c in accent)
     else:
         gust_fill = (220, 220, 220)
-    d.text((cx, info_y + 72), f"Gust {gust:.1f} mph", fill=gust_fill, font=font_status, anchor="mm")
+    d.text((cx, info_y + 75), f"Gust {gust:.1f} mph", fill=gust_fill, font=font_status, anchor="mm")
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     trend    = _trend(history)
