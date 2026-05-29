@@ -224,28 +224,109 @@ def _draw_wind_streaks(d, cx, cy, r, gust, frame):
         d.line([(x1, y1), (x2, y2)], fill=(bright, bright, bright), width=2)
 
 
-def _draw_weather_icon(d, x, y, status, frame, r=12):
-    """Animated weather-condition icon: sun (GOOD), cloud (CAUTION), lightning (TOO WINDY)."""
+def _draw_weather_icon(d, x, y, status, frame, r=18):
+    """Animated weather icon: breathing sun (GOOD), cloud+rain (CAUTION), double bolt (TOO WINDY)."""
     if status == "GOOD":
-        rot = (frame * 2) % 360
+        breathe = 1 + 0.15 * math.sin(frame * math.pi / FRAME_RATE)
+        disc_r  = max(2, int((r - 5) * breathe))
+        rot     = (frame * 3) % 360
         for i in range(8):
-            ang = math.radians(rot + i * 45)
+            ang    = math.radians(rot + i * 45)
             ca, sa = math.cos(ang), math.sin(ang)
-            x1 = int(x + (r - 4) * ca);  y1 = int(y + (r - 4) * sa)
-            x2 = int(x + r * ca);          y2 = int(y + r * sa)
-            d.line([(x1, y1), (x2, y2)], fill=(220, 180, 0), width=2)
-        disc = r - 5
-        d.ellipse((x - disc, y - disc, x + disc, y + disc), fill=(255, 200, 20))
+            ray_r  = r if i % 2 == 0 else r - 4
+            bright = int(200 + 55 * math.sin(frame * math.pi / FRAME_RATE + i * math.pi / 4))
+            bright = max(140, min(255, bright))
+            x1 = int(x + (disc_r + 2) * ca);  y1 = int(y + (disc_r + 2) * sa)
+            x2 = int(x + ray_r * ca);           y2 = int(y + ray_r * sa)
+            d.line([(x1, y1), (x2, y2)], fill=(bright, int(bright * 0.78), 0), width=2)
+        d.ellipse((x - disc_r, y - disc_r, x + disc_r, y + disc_r), fill=(255, 200, 20))
+
     elif status == "CAUTION":
-        pulse = 0.7 + 0.3 * math.sin(frame * math.pi / (FRAME_RATE * 1.5))
-        cc = tuple(int(c * pulse) for c in (145, 160, 175))
-        for bx, by, br in [(-5, 3, 5), (5, 3, 5), (0, -2, 7)]:
+        pulse = 0.75 + 0.25 * math.sin(frame * math.pi / (FRAME_RATE * 1.5))
+        cc    = tuple(int(c * pulse) for c in (155, 170, 185))
+        for bx, by, br in [(-5, 2, 5), (5, 2, 5), (0, -3, 7)]:
             d.ellipse((x+bx-br, y+by-br, x+bx+br, y+by+br), fill=cc)
-    else:   # TOO WINDY — pulsing lightning bolt
-        pulse = 0.4 + 0.6 * math.sin(frame * math.pi / (FRAME_RATE * 0.5))
-        lc = (int(220 * pulse), int(80 * pulse), 0)
-        d.polygon([(x+3, y-r), (x+4, y+1), (x-2, y+1)], fill=lc)
-        d.polygon([(x-4, y+r), (x-3, y-1), (x+2, y-1)], fill=lc)
+        cloud_base = y + 7
+        for i in range(4):
+            dx     = x - 6 + i * 4
+            drop_y = cloud_base + (frame * 2 + i * 3) % 12
+            if drop_y <= y + r - 2:
+                alpha = int(180 + 60 * math.sin(frame * math.pi / FRAME_RATE + i * math.pi / 2))
+                d.line([(dx, drop_y), (dx, drop_y + 3)],
+                       fill=(70, 130, min(255, alpha)), width=2)
+
+    else:   # TOO WINDY — double lightning bolt with speed lines
+        pulse = 0.5 + 0.5 * math.sin(frame * math.pi / (FRAME_RATE * 0.5))
+        lc    = (min(255, int(230 * pulse + 40)), min(255, int(100 * pulse)), 0)
+        dim   = tuple(max(0, int(c * 0.6)) for c in lc)
+        d.polygon([(x-1, y-r+2), (x+2,  y-1), (x-3, y-1)], fill=dim)
+        d.polygon([(x-5, y+r-2), (x-2,  y+1), (x-6, y+1)], fill=dim)
+        d.polygon([(x+4, y-r+2), (x+7,  y-1), (x+1, y-1)], fill=lc)
+        d.polygon([(x,   y+r-2), (x+3,  y+1), (x-3, y+1)], fill=lc)
+        for j, (y_off, x_len) in enumerate([(-6, 12), (0, 16), (6, 10)]):
+            lc_j = tuple(int(c * pulse * (1 - j * 0.15)) for c in (180, 180, 180))
+            d.line([(x - r, y + y_off), (x - r + x_len, y + y_off)], fill=lc_j, width=2)
+
+
+def _draw_info_bg(d, y_top, y_bot, status, frame):
+    """Animated background texture drawn behind the info-section text."""
+    if status == "GOOD":
+        wl     = 80
+        amp    = 3
+        scroll = (frame * 2) % wl
+        for i, (wy_off, wc) in enumerate([
+            (22, (0, 28, 20)),
+            (54, (0, 22, 15)),
+            (82, (0, 18, 12)),
+        ]):
+            wy = y_top + wy_off
+            if wy >= y_bot:
+                continue
+            ph   = i * (wl // 3)
+            prev = None
+            for px in range(device.width + 1):
+                sy = wy + int(amp * math.sin(2 * math.pi * (px + scroll + ph) / wl))
+                if prev:
+                    d.line([prev, (px, sy)], fill=wc, width=1)
+                prev = (px, sy)
+
+    elif status == "CAUTION":
+        info_h = y_bot - y_top
+        for i in range(15):
+            bx  = (i * 16) % device.width
+            t   = (frame * 2 + i * 9) % (info_h + 14)
+            x0, y0 = bx,     y_top + t - 14
+            x1, y1 = bx + 8, y0 + 10
+            y0c = max(y0, y_top);  y1c = min(y1, y_bot)
+            if y1c <= y_top or y0c >= y_bot:
+                continue
+            bright = 100 + int(80 * math.sin(
+                frame * math.pi / (FRAME_RATE * 1.5) + i * math.pi / 5))
+            rc = (int(bright * 0.4), int(bright * 0.55), int(bright * 0.75))
+            d.line([(x0, y0c), (x1, y1c)], fill=rc, width=2)
+
+    else:   # TOO WINDY — horizontal wind streaks scrolling left
+        bxs = [10, 58, 106, 154, 202]
+        lns = [22, 28, 20, 26, 24]
+        spd = [5, 7, 4, 6, 5]
+        for row_off in (44, 70, 94):
+            ry = y_top + row_off
+            if ry >= y_bot:
+                continue
+            for j in range(5):
+                sy = ry + (j % 3 - 1) * 7
+                if sy < y_top or sy >= y_bot:
+                    continue
+                sx = int((bxs[j] - frame * spd[j]) % device.width)
+                ex = sx + lns[j]
+                bright = 55 + int(45 * math.sin(
+                    frame * math.pi / (FRAME_RATE * 0.8) + j * math.pi / 5))
+                sc = (bright, bright, bright)
+                if ex <= device.width:
+                    d.line([(sx, sy), (ex, sy)], fill=sc, width=2)
+                else:
+                    d.line([(sx, sy), (device.width - 1, sy)], fill=sc, width=2)
+                    d.line([(0,  sy), (ex % device.width, sy)], fill=sc, width=2)
 
 
 def _draw_marine_wave(d, frame, color, y_mid):
@@ -398,38 +479,47 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    r  = 88
-    # Advisory strip occupies y=0-20 with a separator line; gauge starts 14px below that
-    cy = 20 + 14 + (r + 11)   # arc top sits at y=34, clearly below advisory separator
+    r  = 100
+    # Advisory strip occupies y=0-20; gauge starts 14px below that
+    cy = 20 + 14 + (r + 11)
     cx = device.width // 2
 
-    # Draw gauge first
+    # Pre-compute info_y so the background draws before gauge text
+    info_y = cy + int(r * 0.707) + 8
+
+    # Draw animated info-section background first (behind all text)
+    _draw_info_bg(d, info_y, device.height - 1, msg, frame)
+
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
-    # Compass rose stays inside the arc (directional indicator, not text)
-    _draw_compass(d, cx + 40, cy - 22, 13, wdir)
+    # Compass rose inside the arc
+    _draw_compass(d, cx + 44, cy - 24, 14, wdir)
 
-    # Info section below the arc — all text/icons outside the horseshoe
-    info_y = cy + int(r * 0.707) + 8
+    # Separator line above info section
     d.line([12, info_y - 4, device.width - 12, info_y - 4], fill=(45, 45, 45))
 
-    # Row 1: weather icon (left) + status text (large, centered)
-    _draw_weather_icon(d, 22, info_y + 24, msg, frame, r=18)
-    d.text((cx + 12, info_y + 24), msg, fill=accent, font=font_big, anchor="mm")
+    # Row 1 (center y=info_y+22): weather icon + status — font_big 44pt
+    _draw_weather_icon(d, 22, info_y + 22, msg, frame, r=18)
+    d.text((cx + 12, info_y + 22), msg, fill=accent, font=font_big, anchor="mm")
 
-    # Row 2: gust speed
-    d.text((cx, info_y + 70), f"Gust {gust:.1f} mph", fill=(220, 220, 220), font=font_status, anchor="mm")
+    # Row 2 (center y=info_y+62): gust — font_status 32pt, pulses in accent when high
+    if gust >= CAUTION_MPH:
+        gp = 0.55 + 0.45 * math.sin(frame * math.pi / (FRAME_RATE * 1.0))
+        gust_fill = tuple(min(255, int(c * gp)) for c in accent)
+    else:
+        gust_fill = (220, 220, 220)
+    d.text((cx, info_y + 62), f"Gust {gust:.1f} mph", fill=gust_fill, font=font_status, anchor="mm")
 
-    # Row 3: wind speed + direction + trend arrow
+    # Row 3 (top y=info_y+82): wind + direction + trend — font_label 14pt
     trend = _trend(history)
-    dir_tag = f"  {wdir}" if wdir else ""
+    dir_tag  = f"  {wdir}" if wdir else ""
     wind_str = f"Wind {wind:.1f} mph{dir_tag}"
-    ww = int(d.textlength(wind_str, font=font_data))
+    ww = int(d.textlength(wind_str, font=font_label))
     wx = (device.width - ww) // 2
-    d.text((wx, info_y + 94), wind_str, fill=(160, 160, 160), font=font_data)
+    d.text((wx, info_y + 82), wind_str, fill=(160, 160, 160), font=font_label)
     if trend is not None:
-        _draw_trend(d, wx + ww + 6, info_y + 94, trend)
+        _draw_trend(d, wx + ww + 6, info_y + 82, trend)
 
     # Build marine string; displayed in the advisory strip when no alerts are active
     marine_parts = []
