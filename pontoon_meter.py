@@ -67,11 +67,10 @@ def _load_font(size):
     return ImageFont.load_default()
 
 font_title  = _load_font(15)
-font_status = _load_font(22)
-font_data   = _load_font(14)
-font_label  = _load_font(12)
-font_gauge  = _load_font(13)
-font_big    = _load_font(30)
+font_status = _load_font(32)
+font_data   = _load_font(22)
+font_label  = _load_font(14)
+font_big    = _load_font(44)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -399,7 +398,7 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    r  = 100
+    r  = 88
     # Advisory strip occupies y=0-20 with a separator line; gauge starts 14px below that
     cy = 20 + 14 + (r + 11)   # arc top sits at y=34, clearly below advisory separator
     cx = device.width // 2
@@ -409,36 +408,28 @@ def render_display(state, frame, needle_gust):
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
     # Compass rose stays inside the arc (directional indicator, not text)
-    _draw_compass(d, cx + 44, cy - 24, 14, wdir)
+    _draw_compass(d, cx + 40, cy - 22, 13, wdir)
 
     # Info section below the arc — all text/icons outside the horseshoe
     info_y = cy + int(r * 0.707) + 8
     d.line([12, info_y - 4, device.width - 12, info_y - 4], fill=(45, 45, 45))
 
     # Row 1: weather icon (left) + status text (large, centered)
-    _draw_weather_icon(d, 20, info_y + 17, msg, frame, r=14)
-    d.text((cx + 10, info_y + 17), msg, fill=accent, font=font_big, anchor="mm")
+    _draw_weather_icon(d, 22, info_y + 24, msg, frame, r=18)
+    d.text((cx + 12, info_y + 24), msg, fill=accent, font=font_big, anchor="mm")
 
-    # Row 2: gust speed (prominent)
-    d.text((cx, info_y + 46), f"Gust {gust:.1f} mph", fill=(220, 220, 220), font=font_status, anchor="mm")
+    # Row 2: gust speed
+    d.text((cx, info_y + 70), f"Gust {gust:.1f} mph", fill=(220, 220, 220), font=font_status, anchor="mm")
 
-    # Row 3: wind speed + trend arrow
+    # Row 3: wind speed + direction + trend arrow
     trend = _trend(history)
-    wind_str = f"Wind {wind:.1f} mph"
+    dir_tag = f"  {wdir}" if wdir else ""
+    wind_str = f"Wind {wind:.1f} mph{dir_tag}"
     ww = int(d.textlength(wind_str, font=font_data))
     wx = (device.width - ww) // 2
-    d.text((wx, info_y + 65), wind_str, fill=(170, 170, 170), font=font_data)
+    d.text((wx, info_y + 94), wind_str, fill=(160, 160, 160), font=font_data)
     if trend is not None:
-        _draw_trend(d, wx + ww + 6, info_y + 65, trend)
-
-    # Row 4: direction (left) and data age (right)
-    dir_str = wdir if wdir else "--"
-    d.text((12, info_y + 81), f"From {dir_str}", fill=(125, 125, 125), font=font_label)
-    if age is not None:
-        age_color = _YELLOW if age >= STALE_MINUTES else (105, 105, 105)
-        age_str = f"{age}m"
-        aw = int(d.textlength(age_str, font=font_label))
-        d.text((device.width - aw - 6, info_y + 81), age_str, fill=age_color, font=font_label)
+        _draw_trend(d, wx + ww + 6, info_y + 94, trend)
 
     # Build marine string; displayed in the advisory strip when no alerts are active
     marine_parts = []
