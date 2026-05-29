@@ -67,10 +67,10 @@ def _load_font(size):
     return ImageFont.load_default()
 
 font_title  = _load_font(15)
-font_status = _load_font(32)
+font_status = _load_font(38)
 font_data   = _load_font(22)
 font_label  = _load_font(14)
-font_big    = _load_font(44)
+font_big    = _load_font(46)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -309,7 +309,7 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
         bxs = [10, 58, 106, 154, 202]
         lns = [22, 28, 20, 26, 24]
         spd = [5, 7, 4, 6, 5]
-        for row_off in (44, 70, 94):
+        for row_off in (25, 72):
             ry = y_top + row_off
             if ry >= y_bot:
                 continue
@@ -343,19 +343,29 @@ def _draw_marine_wave(d, frame, color, y_mid):
 
 
 
-def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None):
-    """Top strip: cycles through NOAA alerts; when quiet, alternates marine data with clock/wave."""
+def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_str=None):
+    """Top strip: cycles NOAA alerts; when quiet, rotates wind / marine / clock."""
     strip_h = 20
     y_mid = y0 + strip_h // 2
     d.rectangle([0, y0, device.width - 1, y0 + strip_h], fill=(18, 18, 18))
-    # Separator line at the BOTTOM of the strip, visually below the advisory text
     d.line([0, y0 + strip_h, device.width, y0 + strip_h], fill=(65, 65, 65))
 
     if not alerts:
         wave_color = tuple(max(0, c // 4) for c in status_color)
-        # Every 6 s swap between wave+time and marine data (if available)
-        if marine_str and (frame // (FRAME_RATE * 6)) % 2 == 1:
-            d.text((device.width // 2, y_mid), marine_str,
+        # Build rotation list: wind → marine → clock/wave
+        slots = []
+        if wind_str:
+            slots.append(("wind",   wind_str))
+        if marine_str:
+            slots.append(("marine", marine_str))
+        slots.append(("clock", None))
+        idx   = (frame // (FRAME_RATE * 5)) % len(slots)
+        kind, text = slots[idx]
+        if kind == "wind":
+            d.text((device.width // 2, y_mid), text,
+                   fill=(175, 195, 175), font=font_label, anchor="mm")
+        elif kind == "marine":
+            d.text((device.width // 2, y_mid), text,
                    fill=(110, 140, 160), font=font_label, anchor="mm")
         else:
             _draw_marine_wave(d, frame, wave_color, y_mid)
@@ -499,29 +509,27 @@ def render_display(state, frame, needle_gust):
     # Separator line above info section
     d.line([12, info_y - 4, device.width - 12, info_y - 4], fill=(45, 45, 45))
 
-    # Row 1 (center y=info_y+22): weather icon + status — font_big 44pt
-    _draw_weather_icon(d, 22, info_y + 22, msg, frame, r=18)
-    d.text((cx + 12, info_y + 22), msg, fill=accent, font=font_big, anchor="mm")
+    # Row 1 (center y=info_y+25): weather icon + status — font_big 46pt
+    _draw_weather_icon(d, 24, info_y + 25, msg, frame, r=22)
+    d.text((cx + 14, info_y + 25), msg, fill=accent, font=font_big, anchor="mm")
 
-    # Row 2 (center y=info_y+62): gust — font_status 32pt, pulses in accent when high
+    # Row 2 (center y=info_y+72): gust — font_status 38pt, pulses in accent when high
     if gust >= CAUTION_MPH:
         gp = 0.55 + 0.45 * math.sin(frame * math.pi / (FRAME_RATE * 1.0))
         gust_fill = tuple(min(255, int(c * gp)) for c in accent)
     else:
         gust_fill = (220, 220, 220)
-    d.text((cx, info_y + 62), f"Gust {gust:.1f} mph", fill=gust_fill, font=font_status, anchor="mm")
+    d.text((cx, info_y + 72), f"Gust {gust:.1f} mph", fill=gust_fill, font=font_status, anchor="mm")
 
-    # Row 3 (top y=info_y+82): wind + direction + trend — font_label 14pt
-    trend = _trend(history)
+    # Wind + trend shown in the advisory strip (cycling with marine / clock)
+    trend    = _trend(history)
     dir_tag  = f"  {wdir}" if wdir else ""
     wind_str = f"Wind {wind:.1f} mph{dir_tag}"
-    ww = int(d.textlength(wind_str, font=font_label))
-    wx = (device.width - ww) // 2
-    d.text((wx, info_y + 82), wind_str, fill=(160, 160, 160), font=font_label)
     if trend is not None:
-        _draw_trend(d, wx + ww + 6, info_y + 82, trend)
+        arrow = "↑" if trend == "up" else ("↓" if trend == "down" else "→")
+        wind_str += f" {arrow}"
 
-    # Build marine string; displayed in the advisory strip when no alerts are active
+    # Build marine string for the advisory strip cycle
     marine_parts = []
     if wtmp is not None:
         marine_parts.append(f"Water {wtmp:.0f}°")
@@ -531,8 +539,9 @@ def render_display(state, frame, needle_gust):
         marine_parts.append(f"{wvht:.1f}ft waves")
     marine_str = "  ".join(marine_parts) if marine_parts else None
 
-    # Top strip: NOAA advisories → cycle through alerts, or alternate wave/marine when clear
-    _draw_alert_strip(d, alerts, frame, accent, y0=0, marine_str=marine_str)
+    # Top strip: NOAA advisories → wind → marine → clock/wave
+    _draw_alert_strip(d, alerts, frame, accent, y0=0,
+                      marine_str=marine_str, wind_str=wind_str)
 
     device.display(img)
 
