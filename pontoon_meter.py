@@ -67,15 +67,14 @@ def _load_font(size):
     return ImageFont.load_default()
 
 font_title  = _load_font(15)
-font_status = _load_font(22)
-font_data   = _load_font(14)
-font_label  = _load_font(12)
-font_gauge  = _load_font(13)
-font_big    = _load_font(30)
+font_status = _load_font(32)
+font_data   = _load_font(22)
+font_label  = _load_font(14)
+font_big    = _load_font(44)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
-    device = ili9341(_serial, width=320, height=240, rotate=1)
+    device = ili9341(_serial, width=320, height=240, rotate=3)
 except Exception as e:
     logging.critical("Display init failed: %s", e)
     sys.exit(1)
@@ -262,17 +261,6 @@ def _draw_marine_wave(d, frame, color, y_mid):
         prev = (x, y)
 
 
-def _draw_marine_data(d, wtmp, wvht, atmp, y=88):
-    """Water temp (left), air temp (center), wave height (right)."""
-    if wtmp is not None:
-        d.text((12, y), f"Water {wtmp:.0f}°F", fill=(150, 150, 150), font=font_label)
-    if atmp is not None:
-        d.text((device.width // 2, y), f"Air {atmp:.0f}°F",
-               fill=(140, 140, 140), font=font_label, anchor="mt")
-    if wvht is not None:
-        d.text((device.width - 12, y), f"Waves {wvht:.1f}ft",
-               fill=(150, 150, 150), font=font_label, anchor="ra")
-
 
 def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None):
     """Top strip: cycles through NOAA alerts; when quiet, alternates marine data with clock/wave."""
@@ -326,7 +314,7 @@ def _gauge_ang(mph_val):
 
 
 def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
-    """270-degree horseshoe gauge: arc opens at the bottom, value displayed in center."""
+    """270-degree horseshoe gauge: arc opens at the bottom; needle, streaks, ticks, labels."""
     box = (cx - r, cy - r, cx + r, cy + r)
     arc_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
 
@@ -360,16 +348,12 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
                           (CAUTION_MPH, str(CAUTION_MPH)), (GAUGE_MAX, str(GAUGE_MAX))]:
         ang = _gauge_ang(mph_val)
         ca, sa = math.cos(ang), math.sin(ang)
-        lbl_r = 55 if sa < -0.1 else 80   # upper half: push toward center
+        lbl_r = 70 if sa < -0.1 else 80
         lx, ly = cx + lbl_r * ca, cy + lbl_r * sa
         d.text((int(lx), int(ly)), lbl, fill=(180, 180, 180), font=font_label, anchor="mm")
 
-    # Large gust value in the center
     if stale:
-        d.text((cx, cy - 15), "STALE", fill=(80, 80, 80), font=font_status, anchor="mm")
-    else:
-        d.text((cx, cy - 28), f"{actual_gust:.1f}", fill=(240, 240, 240), font=font_big, anchor="mm")
-        d.text((cx, cy + 22), "mph gust", fill=(140, 140, 140), font=font_label, anchor="mm")
+        d.text((cx, cy), "STALE", fill=(55, 55, 55), font=font_status, anchor="mm")
 
     # Kite-shaped needle
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
@@ -404,6 +388,7 @@ def render_display(state, frame, needle_gust):
     age     = state["age"]
     wtmp    = state["wtmp"]
     wvht    = state["wvht"]
+    atmp    = state["atmp"]
     alerts  = state["alerts"]
     history = state.get("gust_history", [])
 
@@ -413,7 +398,7 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    r  = 100
+    r  = 88
     # Advisory strip occupies y=0-20 with a separator line; gauge starts 14px below that
     cy = 20 + 14 + (r + 11)   # arc top sits at y=34, clearly below advisory separator
     cx = device.width // 2
@@ -422,38 +407,38 @@ def render_display(state, frame, needle_gust):
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
-    # Compass rose right of gust; large weather-condition icon centered below hub
-    _draw_compass(d, cx + 44, cy - 24, 14, wdir)
-    _draw_weather_icon(d, cx, cy + 52, msg, frame, r=22)
+    # Compass rose stays inside the arc (directional indicator, not text)
+    _draw_compass(d, cx + 40, cy - 22, 13, wdir)
 
-    # Title + wind/gust drawn INSIDE the gauge face at the top
-    title_y = cy - r + 24
-    wind_y  = title_y + 15
-    draw_centered(d, title_y, "PONTOON WIND", (155, 155, 155), font_label)
-    # Show both sustained wind and peak gust on the same line
-    wind_str = f"Wind {wind:.1f}  Gust {gust:.1f} mph"
-    wtw = int(d.textlength(wind_str, font=font_label))
-    wx  = (device.width - wtw) // 2
-    d.text((wx, wind_y), wind_str, fill=(180, 180, 180), font=font_label)
+    # Info section below the arc — all text/icons outside the horseshoe
+    info_y = cy + int(r * 0.707) + 8
+    d.line([12, info_y - 4, device.width - 12, info_y - 4], fill=(45, 45, 45))
+
+    # Row 1: weather icon (left) + status text (large, centered)
+    _draw_weather_icon(d, 22, info_y + 24, msg, frame, r=18)
+    d.text((cx + 12, info_y + 24), msg, fill=accent, font=font_big, anchor="mm")
+
+    # Row 2: gust speed
+    d.text((cx, info_y + 70), f"Gust {gust:.1f} mph", fill=(220, 220, 220), font=font_status, anchor="mm")
+
+    # Row 3: wind speed + direction + trend arrow
     trend = _trend(history)
+    dir_tag = f"  {wdir}" if wdir else ""
+    wind_str = f"Wind {wind:.1f} mph{dir_tag}"
+    ww = int(d.textlength(wind_str, font=font_data))
+    wx = (device.width - ww) // 2
+    d.text((wx, info_y + 94), wind_str, fill=(160, 160, 160), font=font_data)
     if trend is not None:
-        _draw_trend(d, wx + wtw + 9, wind_y + 1, trend)
-
-    if age is not None:
-        age_color = _YELLOW if age >= STALE_MINUTES else (115, 115, 115)
-        age_str = f"{age}m"
-        aw = d.textlength(age_str, font=font_label)
-        d.text((int(device.width - aw - 5), title_y), age_str, fill=age_color, font=font_label)
-
-    # Status label just below the weather icon (icon is at cy+52±22, so cy+76 clears it)
-    draw_centered(d, cy + 76, msg, accent, font_label)
+        _draw_trend(d, wx + ww + 6, info_y + 94, trend)
 
     # Build marine string; displayed in the advisory strip when no alerts are active
     marine_parts = []
     if wtmp is not None:
         marine_parts.append(f"Water {wtmp:.0f}°")
+    if atmp is not None:
+        marine_parts.append(f"Air {atmp:.0f}°")
     if wvht is not None:
-        marine_parts.append(f"{wvht:.1f}ft")
+        marine_parts.append(f"{wvht:.1f}ft waves")
     marine_str = "  ".join(marine_parts) if marine_parts else None
 
     # Top strip: NOAA advisories → cycle through alerts, or alternate wave/marine when clear
