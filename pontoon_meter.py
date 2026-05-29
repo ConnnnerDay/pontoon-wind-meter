@@ -78,10 +78,12 @@ def _load_bold(size):
     return _load_font(size)
 
 font_title  = _load_font(15)
-font_status = _load_bold(42)   # gust line — bold for punch
+font_status = _load_bold(72)   # gust number — massive
 font_data   = _load_font(22)
 font_label  = _load_font(14)
-font_big    = _load_bold(52)   # status word — bold + large
+font_unit   = _load_bold(26)   # mph unit beside gust
+font_big    = _load_bold(56)   # status GOOD/CAUTION
+font_wide   = _load_bold(44)   # status TOO WINDY (longer text)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -320,7 +322,7 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
         bxs = [10, 58, 106, 154, 202]
         lns = [22, 28, 20, 26, 24]
         spd = [5, 7, 4, 6, 5]
-        for row_off in (25, 72):
+        for row_off in (28, 93):
             ry = y_top + row_off
             if ry >= y_bot:
                 continue
@@ -356,7 +358,7 @@ def _draw_marine_wave(d, frame, color, y_mid):
 
 def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_str=None):
     """Top strip: cycles NOAA alerts; when quiet, rotates wind / marine / clock."""
-    strip_h = 20
+    strip_h = 14
     y_mid = y0 + strip_h // 2
     d.rectangle([0, y0, device.width - 1, y0 + strip_h], fill=(18, 18, 18))
     d.line([0, y0 + strip_h, device.width, y0 + strip_h], fill=(65, 65, 65))
@@ -455,7 +457,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
         d.text((int(lx), int(ly)), lbl, fill=(180, 180, 180), font=font_label, anchor="mm")
 
     if stale:
-        d.text((cx, cy), "STALE", fill=(55, 55, 55), font=font_status, anchor="mm")
+        d.text((cx, cy), "STALE", fill=(55, 55, 55), font=font_label, anchor="mm")
 
     # Kite-shaped needle
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
@@ -500,9 +502,9 @@ def render_display(state, frame, needle_gust):
     accent = _STATUS_CONFIG[msg][0]
 
     img, d = make_image()
-    r  = 100
-    # Advisory strip occupies y=0-20; gauge starts 14px below that
-    cy = 20 + 14 + (r + 11)
+    r  = 80
+    # Advisory strip occupies y=0-14; gauge starts 14px below that
+    cy = 14 + 14 + (r + 11)
     cx = device.width // 2
 
     # Pre-compute info_y so the background draws before gauge text
@@ -515,22 +517,27 @@ def render_display(state, frame, needle_gust):
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
     # Compass rose inside the arc
-    _draw_compass(d, cx + 44, cy - 24, 14, wdir)
+    _draw_compass(d, cx + 36, cy - 20, 12, wdir)
 
     # Separator line above info section
     d.line([12, info_y - 4, device.width - 12, info_y - 4], fill=(45, 45, 45))
 
-    # Row 1 (center y=info_y+27): weather icon + status — font_big 52pt bold
-    _draw_weather_icon(d, 24, info_y + 27, msg, frame, r=22)
-    d.text((cx + 14, info_y + 27), msg, fill=accent, font=font_big, anchor="mm")
+    # Row 1 — status word, full-width centered, no icon
+    status_font = font_wide if msg == "TOO WINDY" else font_big
+    d.text((cx, info_y + 28), msg, fill=accent, font=status_font, anchor="mm")
 
-    # Row 2 (center y=info_y+75): gust — font_status 42pt bold, pulses in accent when high
+    # Row 2 — big gust number + "mph" unit side-by-side, centered as a group
     if gust >= CAUTION_MPH:
         gp = 0.55 + 0.45 * math.sin(frame * math.pi / (FRAME_RATE * 1.0))
         gust_fill = tuple(min(255, int(c * gp)) for c in accent)
     else:
         gust_fill = (220, 220, 220)
-    d.text((cx, info_y + 75), f"Gust {gust:.1f} mph", fill=gust_fill, font=font_status, anchor="mm")
+    num_str = f"{gust:.1f}"
+    num_w   = int(d.textlength(num_str, font=font_status))
+    unit_w  = int(d.textlength("mph",   font=font_unit))
+    grp_x   = (device.width - num_w - 8 - unit_w) // 2
+    d.text((grp_x,              info_y + 93),      num_str, fill=gust_fill,      font=font_status, anchor="lm")
+    d.text((grp_x + num_w + 8,  info_y + 93 + 18), "mph",   fill=(140, 140, 140), font=font_unit,   anchor="lm")
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     trend    = _trend(history)
