@@ -75,7 +75,7 @@ font_big    = _load_font(30)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
-    device = ili9341(_serial, width=320, height=240, rotate=1)
+    device = ili9341(_serial, width=320, height=240, rotate=3)
 except Exception as e:
     logging.critical("Display init failed: %s", e)
     sys.exit(1)
