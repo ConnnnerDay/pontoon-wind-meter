@@ -425,11 +425,22 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
     # Dark backing arc
     d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(30, 30, 30), width=22)
 
+    # Subtle radial speed lines — speedometer texture behind the arc bands
+    _draw_speed_lines(d, cx, cy, r)
+
     # Colored zone arcs
     dim = 0.30 if stale else 1.0
     d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,    fill=_dim(_GREEN,  dim), width=16)
     d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END,  fill=_dim(_YELLOW, dim), width=16)
     d.arc(box, CAUTION_ARC_END, arc_end,          fill=_dim(_RED,    dim), width=16)
+
+    # Bright narrow trace from 0 to current needle — highlights the swept arc
+    if needle_gust > 0.1 and not stale:
+        na_end  = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
+        trace_c = ((0, 220, 100) if needle_gust < GOOD_MPH
+                   else ((255, 210, 0) if needle_gust <= CAUTION_MPH
+                         else (255, 80, 80)))
+        d.arc(box, _GAUGE_ARC_START, na_end, fill=trace_c, width=4)
 
     # Animated wind streaks flowing inside the arc face
     _draw_wind_streaks(d, cx, cy, r, actual_gust, frame)
@@ -480,6 +491,14 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
         fill=needle_fill,
     )
 
+    # Colored dot at needle tip — pinpoints current value on the arc
+    if not stale:
+        tc = ((0, 200, 90) if needle_gust < GOOD_MPH
+              else ((240, 190, 0) if needle_gust <= CAUTION_MPH
+                    else (240, 60, 60)))
+        d.ellipse((int(tip[0]) - 4, int(tip[1]) - 4,
+                   int(tip[0]) + 4, int(tip[1]) + 4), fill=tc)
+
     # Pivot hub
     d.ellipse((cx - 11, cy - 11, cx + 11, cy + 11), fill=(28, 28, 28), outline=(90, 90, 90), width=1)
     d.ellipse((cx -  5, cy -  5, cx +  5, cy +  5), fill=(210, 210, 210))
@@ -501,6 +520,8 @@ def render_display(state, frame, needle_gust):
               else "TOO WINDY")
     accent = _STATUS_CONFIG[msg][0]
 
+    trend = _trend(history)
+
     img, d = make_image()
     r  = 80
     # Advisory strip occupies y=0-14; gauge starts 14px below that
@@ -519,8 +540,10 @@ def render_display(state, frame, needle_gust):
     # Compass rose inside the arc
     _draw_compass(d, cx + 36, cy - 20, 12, wdir)
 
-    # Separator line above info section
-    d.line([12, info_y - 4, device.width - 12, info_y - 4], fill=(45, 45, 45))
+    # Pulsing separator — slowly breathes in the accent color
+    sep_p   = 0.25 + 0.75 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3)))
+    sep_col = tuple(int(c * sep_p * 0.22) for c in accent)
+    d.line([0, info_y - 4, device.width, info_y - 4], fill=sep_col)
 
     # Row 1 — status word, full-width centered, no icon
     status_font = font_wide if msg == "TOO WINDY" else font_big
@@ -539,8 +562,11 @@ def render_display(state, frame, needle_gust):
     d.text((grp_x,              info_y + 93),      num_str, fill=gust_fill,      font=font_status, anchor="lm")
     d.text((grp_x + num_w + 8,  info_y + 93 + 18), "mph",   fill=(140, 140, 140), font=font_unit,   anchor="lm")
 
+    # Trend arrow at right margin, vertically centered on the gust row
+    if trend is not None:
+        _draw_trend(d, device.width - 14, info_y + 89, trend)
+
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
-    trend    = _trend(history)
     dir_tag  = f"  {wdir}" if wdir else ""
     wind_str = f"Wind {wind:.1f} mph{dir_tag}"
     if trend is not None:
