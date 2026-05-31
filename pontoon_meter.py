@@ -103,6 +103,7 @@ _state = {
 
 # Animation-loop-only state (not shared; no lock needed)
 _needle_gust = 0.0   # smoothed gust value driving the needle
+_needle_vel  = 0.0   # velocity for spring-damper overshoot physics
 
 
 def make_image():
@@ -356,6 +357,16 @@ def _draw_marine_wave(d, frame, color, y_mid):
 
 
 
+def _draw_edge_accents(d, accent, frame):
+    """Thin pulsing accent strips on the left and right screen edges."""
+    pulse = 0.2 + 0.8 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.5)))
+    for x in range(3):
+        fade = (3 - x) / 3.0
+        col  = tuple(int(c * pulse * fade * 0.28) for c in accent)
+        d.line([(x, 14), (x, device.height - 1)], fill=col)
+        d.line([(device.width - 1 - x, 14), (device.width - 1 - x, device.height - 1)], fill=col)
+
+
 def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_str=None):
     """Top strip: cycles NOAA alerts; when quiet, rotates wind / marine / clock."""
     strip_h = 14
@@ -417,7 +428,7 @@ def _gauge_ang(mph_val):
     return math.radians(_GAUGE_ARC_START + (mph_val / GAUGE_MAX) * _GAUGE_ARC_SWEEP)
 
 
-def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
+def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind=None):
     """270-degree horseshoe gauge: arc opens at the bottom; needle, streaks, ticks, labels."""
     box = (cx - r, cy - r, cx + r, cy + r)
     arc_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
@@ -474,6 +485,15 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
 
     if stale:
         d.text((cx, cy), "STALE", fill=(55, 55, 55), font=font_label, anchor="mm")
+
+    # Sustained avg wind: small dot on the arc at r-10, plus tiny readout below hub
+    if wind is not None and not stale:
+        w_ang  = _gauge_ang(min(wind, GAUGE_MAX))
+        w_ca, w_sa = math.cos(w_ang), math.sin(w_ang)
+        wx = int(cx + (r - 10) * w_ca)
+        wy = int(cy + (r - 10) * w_sa)
+        d.ellipse((wx - 4, wy - 4, wx + 4, wy + 4), fill=(45, 45, 45), outline=(145, 145, 145), width=1)
+        d.text((cx, cy + 24), f"avg {wind:.0f}", fill=(72, 72, 72), font=font_label, anchor="mm")
 
     # Kite-shaped needle
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
@@ -541,7 +561,7 @@ def render_display(state, frame, needle_gust):
     _draw_info_bg(d, info_y, device.height - 1, msg, frame)
 
     stale = age is not None and age >= STALE_MINUTES
-    _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
+    _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind)
 
     # Compass rose inside the arc — upper-left to clear the "18" label at upper-right
     _draw_compass(d, cx - 38, cy - 22, 14, wdir)
@@ -595,6 +615,9 @@ def render_display(state, frame, needle_gust):
     if wvht is not None:
         marine_parts.append(f"{wvht:.1f}ft waves")
     marine_str = "  ".join(marine_parts) if marine_parts else None
+
+    # Pulsing accent strips framing the left/right screen edges
+    _draw_edge_accents(d, accent, frame)
 
     # Top strip: NOAA advisories → wind → marine → clock/wave
     _draw_alert_strip(d, alerts, frame, accent, y0=0,
@@ -711,7 +734,7 @@ def _data_loop():
 
 
 def main():
-    global _needle_gust
+    global _needle_gust, _needle_vel
 
     threading.Thread(target=_data_loop, daemon=True).start()
 
@@ -725,8 +748,10 @@ def main():
             snap["gust_history"]  = list(_state["gust_history"])
 
         if snap["wind"] is not None:
-            # Exponential approach: close 35 % of remaining gap each frame
-            _needle_gust += (snap["gust"] - _needle_gust) * 0.35
+            # Spring-damper: natural overshoot and settle like a real needle
+            diff = snap["gust"] - _needle_gust
+            _needle_vel  = max(-6.0, min(6.0, _needle_vel * 0.50 + diff * 0.28))
+            _needle_gust = max(0.0, min(GAUGE_MAX + 3, _needle_gust + _needle_vel))
             try:
                 render_display(snap, frame, _needle_gust)
             except Exception:
@@ -746,8 +771,8 @@ def main():
                 dots = "." * ((frame // FRAME_RATE) % 4)
                 bright = int(60 + 30 * math.sin(frame * math.pi / (FRAME_RATE * 2)))
                 img, d = make_image()
-                draw_centered(d, 98,  "PONTOON WIND",      (bright, bright, bright),       font_title)
-                draw_centered(d, 116, f"Connecting{dots}", (bright - 20, bright - 20, bright - 20), font_status)
+                draw_centered(d, 98,  "PONTOON WIND",      (bright, bright, bright),               font_title)
+                draw_centered(d, 118, f"Connecting{dots}", (bright - 20, bright - 20, bright - 20), font_data)
                 device.display(img)
             except Exception:
                 logging.exception("Connecting screen render failed")
