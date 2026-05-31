@@ -183,6 +183,11 @@ def _draw_compass(d, cx, cy, r, wdir_str):
     d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(70, 70, 70), width=1)
     # North tick — tiny mark at the top of the circle
     d.line([(cx, cy - r + 1), (cx, cy - r + 4)], fill=(100, 100, 100), width=1)
+    # Cardinal marks at E, S, W (single dim pixel each)
+    for card_deg in (90, 180, 270):
+        cr = math.radians(card_deg)
+        d.point((int(cx + (r - 1) * math.sin(cr)), int(cy - (r - 1) * math.cos(cr))),
+                fill=(62, 62, 62))
 
     deg = _dir_deg.get(wdir_str)
     if deg is None:
@@ -302,6 +307,20 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
                     d.line([prev, (px, sy)], fill=wc, width=1)
                 prev = (px, sy)
 
+        # Floating upward particles — slow drift gives GOOD state a lively feel
+        span = y_bot - y_top
+        for i in range(14):
+            px_pos  = (i * 17 + 11) % device.width
+            speed   = 1 + (i % 3)
+            py_off  = span - (frame * speed + i * (span // 14)) % span
+            py_pos  = y_top + int(py_off)
+            bright  = int(50 + 35 * math.sin(frame * math.pi / (FRAME_RATE * 2.2) + i * 0.8))
+            pc = (0, bright // 2, bright // 3)
+            if y_top <= py_pos < y_bot:
+                d.point((px_pos, py_pos), fill=pc)
+                if py_pos + 1 < y_bot:
+                    d.point((px_pos, py_pos + 1), fill=(0, bright // 5, bright // 7))
+
     elif status == "CAUTION":
         info_h = y_bot - y_top
         for i in range(20):
@@ -399,6 +418,10 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
             d.text((cx, y_mid), text, fill=(110, 140, 160), font=font_label, anchor="mm")
         else:
             _draw_marine_wave(d, frame, wave_color, y_mid)
+            # Tiny clock icon at the left — matches the wind/marine dot position
+            d.ellipse((3, y_mid - 3, 9, y_mid + 3), outline=(72, 72, 72), width=1)
+            d.line([(6, y_mid), (6, y_mid - 2)], fill=(72, 72, 72), width=1)
+            d.line([(6, y_mid), (8, y_mid)],     fill=(72, 72, 72), width=1)
             time_str = time.strftime("%H:%M")
             if age_minutes is not None:
                 age_str = f"{int(age_minutes)}m"
@@ -406,6 +429,14 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
                 d.text((cx + 4, y_mid), age_str,  fill=(72, 72, 72),   font=font_label, anchor="lm")
             else:
                 d.text((cx, y_mid), time_str, fill=(110, 110, 110), font=font_label, anchor="mm")
+
+        # Horizontal slot progress dots at right edge
+        n_slots = len(slots)
+        for si in range(n_slots):
+            dx = device.width - 4 - (n_slots - 1 - si) * 5
+            dc = (tuple(min(255, int(c * 0.65)) for c in status_color) if si == idx
+                  else (36, 36, 36))
+            d.ellipse((dx - 2, y_mid - 2, dx + 2, y_mid + 2), fill=dc)
         return
 
     idx = (frame // (FRAME_RATE * 4)) % len(alerts)   # new alert every 4 s
@@ -530,13 +561,15 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     if stale:
         d.text((cx, cy), "STALE", fill=(55, 55, 55), font=font_label, anchor="mm")
 
-    # Sustained avg wind: small dot on the arc at r-10, plus tiny readout below hub
+    # Sustained avg wind: diamond marker on the arc at r-10, plus tiny readout below hub
     if wind is not None and not stale:
         w_ang  = _gauge_ang(min(wind, GAUGE_MAX))
         w_ca, w_sa = math.cos(w_ang), math.sin(w_ang)
         wx = int(cx + (r - 10) * w_ca)
         wy = int(cy + (r - 10) * w_sa)
-        d.ellipse((wx - 4, wy - 4, wx + 4, wy + 4), fill=(45, 45, 45), outline=(145, 145, 145), width=1)
+        ds = 4
+        d.polygon([(wx, wy - ds), (wx + ds, wy), (wx, wy + ds), (wx - ds, wy)],
+                  fill=(45, 45, 45), outline=(145, 145, 145))
         d.text((cx, cy + 24), f"avg {wind:.0f}", fill=(72, 72, 72), font=font_label, anchor="mm")
 
     # Kite-shaped needle
@@ -739,7 +772,7 @@ def handle_exit(sig, _frame):
     logging.info("Shutting down (signal %d)", sig)
     try:
         img, d = make_image()
-        draw_centered(d, 105, "Offline", (80, 80, 80), font_status)
+        draw_centered(d, 125, "Offline", (80, 80, 80), font_big)
         device.display(img)
     except Exception:
         pass
