@@ -182,9 +182,9 @@ def _draw_compass(d, cx, cy, r, wdir_str):
     _dir_deg = {"N": 0, "NE": 45, "E": 90, "SE": 135,
                 "S": 180, "SW": 225, "W": 270, "NW": 315}
 
-    d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(48, 48, 48), width=1)
+    d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(70, 70, 70), width=1)
     # North tick — tiny mark at the top of the circle
-    d.line([(cx, cy - r + 1), (cx, cy - r + 4)], fill=(62, 62, 62), width=1)
+    d.line([(cx, cy - r + 1), (cx, cy - r + 4)], fill=(100, 100, 100), width=1)
 
     deg = _dir_deg.get(wdir_str)
     if deg is None:
@@ -210,11 +210,11 @@ def _draw_compass(d, cx, cy, r, wdir_str):
     tail_y = cy + (r - 5) * cos_r
 
     d.polygon([(int(tip_x), int(tip_y)), (int(l_x), int(l_y)),
-               (int(rr_x), int(rr_y))], fill=(185, 185, 185))
+               (int(rr_x), int(rr_y))], fill=(225, 225, 225))
     d.line([(int(base_x), int(base_y)), (int(tail_x), int(tail_y))],
-           fill=(105, 105, 105), width=1)
+           fill=(130, 130, 130), width=1)
     # Abbreviation in the lower half of the circle, dim so arrow reads over it
-    d.text((cx, cy + 3), wdir_str, fill=(58, 58, 58), font=font_label, anchor="mt")
+    d.text((cx, cy + 3), wdir_str, fill=(95, 95, 95), font=font_label, anchor="mt")
 
 
 def _draw_wind_streaks(d, cx, cy, r, gust, frame):
@@ -428,8 +428,15 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
     # Subtle radial speed lines — speedometer texture behind the arc bands
     _draw_speed_lines(d, cx, cy, r)
 
-    # Colored zone arcs
     dim = 0.30 if stale else 1.0
+
+    # Soft ambient glow behind zone arcs — wider dim pre-pass for depth
+    glow_dim = dim * 0.22
+    d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,    fill=_dim(_GREEN,  glow_dim), width=26)
+    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END,  fill=_dim(_YELLOW, glow_dim), width=26)
+    d.arc(box, CAUTION_ARC_END, arc_end,           fill=_dim(_RED,    glow_dim), width=26)
+
+    # Colored zone arcs
     d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,    fill=_dim(_GREEN,  dim), width=16)
     d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END,  fill=_dim(_YELLOW, dim), width=16)
     d.arc(box, CAUTION_ARC_END, arc_end,          fill=_dim(_RED,    dim), width=16)
@@ -458,14 +465,12 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
                fill=(220, 220, 220) if is_major else (160, 160, 160),
                width=2 if is_major else 1)
 
-    # Zone-boundary mph labels (upper labels pushed inward to clear title/wind text)
-    for mph_val, lbl in [(0, "0"), (GOOD_MPH, str(GOOD_MPH)),
-                          (CAUTION_MPH, str(CAUTION_MPH)), (GAUGE_MAX, str(GAUGE_MAX))]:
+    # Zone-boundary labels: just the two threshold values, inside the gauge face
+    for mph_val, lbl in [(GOOD_MPH, str(GOOD_MPH)), (CAUTION_MPH, str(CAUTION_MPH))]:
         ang = _gauge_ang(mph_val)
         ca, sa = math.cos(ang), math.sin(ang)
-        lbl_r = 70 if sa < -0.1 else 80
-        lx, ly = cx + lbl_r * ca, cy + lbl_r * sa
-        d.text((int(lx), int(ly)), lbl, fill=(180, 180, 180), font=font_label, anchor="mm")
+        lx, ly = cx + (r - 28) * ca, cy + (r - 28) * sa
+        d.text((int(lx), int(ly)), lbl, fill=(165, 165, 165), font=font_label, anchor="mm")
 
     if stale:
         d.text((cx, cy), "STALE", fill=(55, 55, 55), font=font_label, anchor="mm")
@@ -499,8 +504,9 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False):
         d.ellipse((int(tip[0]) - 4, int(tip[1]) - 4,
                    int(tip[0]) + 4, int(tip[1]) + 4), fill=tc)
 
-    # Pivot hub
+    # Pivot hub — three concentric rings for a mechanical look
     d.ellipse((cx - 11, cy - 11, cx + 11, cy + 11), fill=(28, 28, 28), outline=(90, 90, 90), width=1)
+    d.ellipse((cx -  8, cy -  8, cx +  8, cy +  8), fill=(18, 18, 18), outline=(55, 55, 55), width=1)
     d.ellipse((cx -  5, cy -  5, cx +  5, cy +  5), fill=(210, 210, 210))
 
 
@@ -537,17 +543,24 @@ def render_display(state, frame, needle_gust):
     stale = age is not None and age >= STALE_MINUTES
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale)
 
-    # Compass rose inside the arc
-    _draw_compass(d, cx + 36, cy - 20, 12, wdir)
+    # Compass rose inside the arc — upper-left to clear the "18" label at upper-right
+    _draw_compass(d, cx - 38, cy - 22, 14, wdir)
 
     # Pulsing separator — slowly breathes in the accent color
     sep_p   = 0.25 + 0.75 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3)))
     sep_col = tuple(int(c * sep_p * 0.22) for c in accent)
     d.line([0, info_y - 4, device.width, info_y - 4], fill=sep_col)
 
-    # Row 1 — status word, full-width centered, no icon
+    # Row 1 — status word, pulsing fill for urgent states
     status_font = font_wide if msg == "TOO WINDY" else font_big
-    d.text((cx, info_y + 28), msg, fill=accent, font=status_font, anchor="mm")
+    if msg == "TOO WINDY":
+        pv = int(55 * math.sin(frame * math.pi / (FRAME_RATE * 0.8)))
+    elif msg == "CAUTION":
+        pv = int(25 * math.sin(frame * math.pi / (FRAME_RATE * 1.5)))
+    else:
+        pv = 0
+    text_fill = tuple(min(255, max(0, c + pv)) for c in accent)
+    d.text((cx, info_y + 28), msg, fill=text_fill, font=status_font, anchor="mm")
 
     # Row 2 — big gust number + "mph" unit side-by-side, centered as a group
     if gust >= CAUTION_MPH:
