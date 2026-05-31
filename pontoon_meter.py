@@ -317,7 +317,13 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
             rc = (int(bright * 0.35), int(bright * 0.50), int(bright * 0.80))
             d.line([(x0, y0c), (x1, y1c)], fill=rc, width=2)
 
-    else:   # TOO WINDY — horizontal wind streaks scrolling left
+    else:   # TOO WINDY — horizontal wind streaks + periodic red alarm flash
+        # Brief alarm flash every ~10 s — red wash fades in/out over 4 frames
+        flash = (frame * 2) % 100
+        if flash < 4:
+            flash_r = int(65 * (1 - flash / 4))
+            d.rectangle([0, y_top, device.width - 1, y_bot], fill=(flash_r, 0, 0))
+
         bxs = [8,  52,  96, 140, 184, 228,  30,  74]
         lns = [22, 28,  20,  26,  24,  18,  32,  16]
         spd = [5,   7,   4,   6,   5,   8,   6,   3]
@@ -365,10 +371,11 @@ def _draw_edge_accents(d, accent, frame):
         d.line([(device.width - 1 - x, 14), (device.width - 1 - x, device.height - 1)], fill=col)
 
 
-def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_str=None):
+def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_str=None, age_minutes=None):
     """Top strip: cycles NOAA alerts; when quiet, rotates wind / marine / clock."""
     strip_h = 14
     y_mid = y0 + strip_h // 2
+    cx    = device.width // 2
     d.rectangle([0, y0, device.width - 1, y0 + strip_h], fill=(18, 18, 18))
     sep_b = int(38 + 42 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.0))))
     sep_c = tuple(min(255, int(c * sep_b / 255)) for c in status_color)
@@ -376,25 +383,29 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
 
     if not alerts:
         wave_color = tuple(max(0, c // 4) for c in status_color)
-        # Build rotation list: wind → marine → clock/wave
         slots = []
         if wind_str:
             slots.append(("wind",   wind_str))
         if marine_str:
             slots.append(("marine", marine_str))
         slots.append(("clock", None))
-        idx   = (frame // (FRAME_RATE * 5)) % len(slots)
+        idx  = (frame // (FRAME_RATE * 5)) % len(slots)
         kind, text = slots[idx]
         if kind == "wind":
-            d.text((device.width // 2, y_mid), text,
-                   fill=(175, 195, 175), font=font_label, anchor="mm")
+            d.ellipse((3, y_mid - 3, 9, y_mid + 3), fill=(55, 115, 55))
+            d.text((cx, y_mid), text, fill=(175, 195, 175), font=font_label, anchor="mm")
         elif kind == "marine":
-            d.text((device.width // 2, y_mid), text,
-                   fill=(110, 140, 160), font=font_label, anchor="mm")
+            d.ellipse((3, y_mid - 3, 9, y_mid + 3), fill=(35, 70, 115))
+            d.text((cx, y_mid), text, fill=(110, 140, 160), font=font_label, anchor="mm")
         else:
             _draw_marine_wave(d, frame, wave_color, y_mid)
-            d.text((device.width // 2, y_mid), time.strftime("%H:%M"),
-                   fill=(110, 110, 110), font=font_label, anchor="mm")
+            time_str = time.strftime("%H:%M")
+            if age_minutes is not None:
+                age_str = f"{int(age_minutes)}m"
+                d.text((cx - 4, y_mid), time_str, fill=(110, 110, 110), font=font_label, anchor="rm")
+                d.text((cx + 4, y_mid), age_str,  fill=(72, 72, 72),   font=font_label, anchor="lm")
+            else:
+                d.text((cx, y_mid), time_str, fill=(110, 110, 110), font=font_label, anchor="mm")
         return
 
     idx = (frame // (FRAME_RATE * 4)) % len(alerts)   # new alert every 4 s
@@ -687,9 +698,13 @@ def render_display(state, frame, needle_gust):
     # Pulsing accent strips framing the left/right screen edges
     _draw_edge_accents(d, accent, frame)
 
+    # Thin accent line at screen bottom — completes the edge framing
+    d.line([0, device.height - 1, device.width - 1, device.height - 1],
+           fill=tuple(c // 6 for c in accent))
+
     # Top strip: NOAA advisories → wind → marine → clock/wave
     _draw_alert_strip(d, alerts, frame, accent, y0=0,
-                      marine_str=marine_str, wind_str=wind_str)
+                      marine_str=marine_str, wind_str=wind_str, age_minutes=age)
 
     device.display(img)
 
@@ -827,9 +842,18 @@ def main():
         elif snap["error"] is not None:
             try:
                 img, d = make_image()
-                draw_centered(d, 20, "ERROR", _RED, font_status)
-                d.text((12, 65), textwrap.shorten(snap["error"], width=40, placeholder="…"),
-                       fill=(180, 180, 180), font=font_data)
+                ep  = 0.45 + 0.55 * math.sin(frame * math.pi / (FRAME_RATE * 0.7))
+                ec  = tuple(int(c * (0.35 + 0.65 * ep)) for c in _RED)
+                ec2 = tuple(c // 2 for c in ec)
+                # Layered pulsing corner triangles
+                for sz, col in ((30, ec2), (16, ec)):
+                    d.polygon([(0, 0), (sz, 0), (0, sz)], fill=col)
+                    d.polygon([(device.width - 1, 0),
+                               (device.width - 1 - sz, 0),
+                               (device.width - 1, sz)], fill=col)
+                draw_centered(d, 78, "ERROR", ec, font_big)
+                err_text = textwrap.shorten(snap["error"], width=34, placeholder="…")
+                d.text((12, 150), err_text, fill=(160, 160, 160), font=font_data)
                 device.display(img)
             except Exception:
                 logging.exception("Error screen render failed")
