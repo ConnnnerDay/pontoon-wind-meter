@@ -286,17 +286,18 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
     """Animated background texture drawn behind the info-section text."""
     if status == "GOOD":
         wl     = 80
-        amp    = 3
+        amp    = 4
         scroll = (frame * 2) % wl
         for i, (wy_off, wc) in enumerate([
-            (22, (0, 28, 20)),
-            (54, (0, 22, 15)),
-            (82, (0, 18, 12)),
+            (18, (0, 58, 38)),
+            (50, (0, 46, 30)),
+            (78, (0, 34, 22)),
+            (106, (0, 24, 16)),
         ]):
             wy = y_top + wy_off
             if wy >= y_bot:
                 continue
-            ph   = i * (wl // 3)
+            ph   = i * (wl // 4)
             prev = None
             for px in range(device.width + 1):
                 sy = wy + int(amp * math.sin(2 * math.pi * (px + scroll + ph) / wl))
@@ -306,35 +307,35 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
 
     elif status == "CAUTION":
         info_h = y_bot - y_top
-        for i in range(15):
-            bx  = (i * 16) % device.width
-            t   = (frame * 2 + i * 9) % (info_h + 14)
+        for i in range(20):
+            bx  = (i * 12) % device.width
+            t   = (frame * 2 + i * 7) % (info_h + 14)
             x0, y0 = bx,     y_top + t - 14
             x1, y1 = bx + 8, y0 + 10
             y0c = max(y0, y_top);  y1c = min(y1, y_bot)
             if y1c <= y_top or y0c >= y_bot:
                 continue
-            bright = 100 + int(80 * math.sin(
+            bright = 120 + int(80 * math.sin(
                 frame * math.pi / (FRAME_RATE * 1.5) + i * math.pi / 5))
-            rc = (int(bright * 0.4), int(bright * 0.55), int(bright * 0.75))
+            rc = (int(bright * 0.35), int(bright * 0.50), int(bright * 0.80))
             d.line([(x0, y0c), (x1, y1c)], fill=rc, width=2)
 
     else:   # TOO WINDY — horizontal wind streaks scrolling left
-        bxs = [10, 58, 106, 154, 202]
-        lns = [22, 28, 20, 26, 24]
-        spd = [5, 7, 4, 6, 5]
-        for row_off in (28, 93):
+        bxs = [8,  52,  96, 140, 184, 228,  30,  74]
+        lns = [22, 28,  20,  26,  24,  18,  32,  16]
+        spd = [5,   7,   4,   6,   5,   8,   6,   3]
+        for row_off in (14, 50, 86, 112):
             ry = y_top + row_off
             if ry >= y_bot:
                 continue
-            for j in range(5):
-                sy = ry + (j % 3 - 1) * 7
+            for j in range(8):
+                sy = ry + (j % 3 - 1) * 6
                 if sy < y_top or sy >= y_bot:
                     continue
                 sx = int((bxs[j] - frame * spd[j]) % device.width)
                 ex = sx + lns[j]
-                bright = 55 + int(45 * math.sin(
-                    frame * math.pi / (FRAME_RATE * 0.8) + j * math.pi / 5))
+                bright = 65 + int(55 * math.sin(
+                    frame * math.pi / (FRAME_RATE * 0.8) + j * math.pi / 4))
                 sc = (bright, bright, bright)
                 if ex <= device.width:
                     d.line([(sx, sy), (ex, sy)], fill=sc, width=2)
@@ -428,7 +429,7 @@ def _gauge_ang(mph_val):
     return math.radians(_GAUGE_ARC_START + (mph_val / GAUGE_MAX) * _GAUGE_ARC_SWEEP)
 
 
-def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind=None):
+def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind=None, history=None):
     """270-degree horseshoe gauge: arc opens at the bottom; needle, streaks, ticks, labels."""
     box = (cx - r, cy - r, cx + r, cy + r)
     arc_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
@@ -463,7 +464,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     # Animated wind streaks flowing inside the arc face
     _draw_wind_streaks(d, cx, cy, r, actual_gust, frame)
 
-    # Tick marks
+    # Tick marks — colored by zone for instant zone-boundary feedback
     tick_outer = r - 8
     tick_inner = r - 18
     for mph_val in range(0, GAUGE_MAX + 1, 5):
@@ -472,9 +473,15 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         x1, y1 = cx + tick_outer * ca, cy + tick_outer * sa
         x2, y2 = cx + tick_inner * ca, cy + tick_inner * sa
         is_major = (mph_val % 10 == 0) or mph_val == GAUGE_MAX
+        t_dim = dim * (0.7 if is_major else 0.45)
+        if mph_val <= GOOD_MPH:
+            tick_c = _dim(_GREEN, t_dim)
+        elif mph_val <= CAUTION_MPH:
+            tick_c = _dim(_YELLOW, t_dim)
+        else:
+            tick_c = _dim(_RED, t_dim)
         d.line([(int(x1), int(y1)), (int(x2), int(y2))],
-               fill=(220, 220, 220) if is_major else (160, 160, 160),
-               width=2 if is_major else 1)
+               fill=tick_c, width=2 if is_major else 1)
 
     # Zone-boundary labels: just the two threshold values, inside the gauge face
     for mph_val, lbl in [(GOOD_MPH, str(GOOD_MPH)), (CAUTION_MPH, str(CAUTION_MPH))]:
@@ -482,6 +489,17 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         ca, sa = math.cos(ang), math.sin(ang)
         lx, ly = cx + (r - 28) * ca, cy + (r - 28) * sa
         d.text((int(lx), int(ly)), lbl, fill=(165, 165, 165), font=font_label, anchor="mm")
+
+    # Peak gust marker — bright tick just outside the arc at session-max position
+    if history and len(history) >= 2 and not stale:
+        peak = max(history)
+        if peak > needle_gust + 0.3:
+            p_ang  = _gauge_ang(min(peak, GAUGE_MAX))
+            p_ca, p_sa = math.cos(p_ang), math.sin(p_ang)
+            po = (cx + (r + 4) * p_ca, cy + (r + 4) * p_sa)
+            pi = (cx + (r - 4) * p_ca, cy + (r - 4) * p_sa)
+            d.line([(int(po[0]), int(po[1])), (int(pi[0]), int(pi[1]))],
+                   fill=(220, 200, 55), width=2)
 
     if stale:
         d.text((cx, cy), "STALE", fill=(55, 55, 55), font=font_label, anchor="mm")
@@ -508,6 +526,14 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     left  = (wide[0] + hw * cp, wide[1] + hw * sp)
     right = (wide[0] - hw * cp, wide[1] - hw * sp)
     needle_fill = (90, 90, 90) if stale else (240, 240, 240)
+    # Shadow polygon offset (+2,+2) for depth
+    d.polygon(
+        [(int(tip[0])   + 2, int(tip[1])   + 2),
+         (int(left[0])  + 2, int(left[1])  + 2),
+         (int(tail[0])  + 2, int(tail[1])  + 2),
+         (int(right[0]) + 2, int(right[1]) + 2)],
+        fill=(10, 10, 10),
+    )
     d.polygon(
         [(int(tip[0]),   int(tip[1])),
          (int(left[0]),  int(left[1])),
@@ -516,13 +542,15 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         fill=needle_fill,
     )
 
-    # Colored dot at needle tip — pinpoints current value on the arc
+    # Pulsing colored dot at needle tip — breathes to draw the eye
     if not stale:
         tc = ((0, 200, 90) if needle_gust < GOOD_MPH
               else ((240, 190, 0) if needle_gust <= CAUTION_MPH
                     else (240, 60, 60)))
-        d.ellipse((int(tip[0]) - 4, int(tip[1]) - 4,
-                   int(tip[0]) + 4, int(tip[1]) + 4), fill=tc)
+        tp = 0.65 + 0.35 * math.sin(frame * math.pi / (FRAME_RATE * 0.7))
+        tr = max(2, int(5 * tp))
+        d.ellipse((int(tip[0]) - tr, int(tip[1]) - tr,
+                   int(tip[0]) + tr, int(tip[1]) + tr), fill=tc)
 
     # Pivot hub — three concentric rings for a mechanical look
     d.ellipse((cx - 11, cy - 11, cx + 11, cy + 11), fill=(28, 28, 28), outline=(90, 90, 90), width=1)
@@ -561,7 +589,7 @@ def render_display(state, frame, needle_gust):
     _draw_info_bg(d, info_y, device.height - 1, msg, frame)
 
     stale = age is not None and age >= STALE_MINUTES
-    _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind)
+    _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind, history=history)
 
     # Compass rose inside the arc — upper-left to clear the "18" label at upper-right
     _draw_compass(d, cx - 38, cy - 22, 14, wdir)
