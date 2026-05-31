@@ -153,16 +153,13 @@ def _trend(history):
 
 
 def _draw_trend(d, cx, y, trend):
-    """9 px tall directional indicator centred at (cx, y)."""
+    """12 px tall directional indicator: up = rising, down = easing, dash = steady."""
     if trend == "up":
-        # Upward triangle — wind increasing (warm amber warning)
-        d.polygon([(cx, y), (cx - 4, y + 8), (cx + 4, y + 8)], fill=(240, 130, 0))
+        d.polygon([(cx, y), (cx - 6, y + 12), (cx + 6, y + 12)], fill=(240, 130, 0))
     elif trend == "down":
-        # Downward triangle — wind easing (cool blue)
-        d.polygon([(cx, y + 8), (cx - 4, y), (cx + 4, y)], fill=(0, 145, 200))
+        d.polygon([(cx, y + 12), (cx - 6, y), (cx + 6, y)], fill=(0, 145, 200))
     else:
-        # Steady — horizontal dash
-        d.line([(cx - 5, y + 4), (cx + 5, y + 4)], fill=(85, 85, 85), width=2)
+        d.line([(cx - 7, y + 6), (cx + 7, y + 6)], fill=(85, 85, 85), width=2)
 
 
 def _draw_speed_lines(d, cx, cy, r):
@@ -434,11 +431,24 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     box = (cx - r, cy - r, cx + r, cy + r)
     arc_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
 
+    # Outer border ring — thin arc framing the instrument face
+    ob  = r + 10
+    d.arc((cx - ob, cy - ob, cx + ob, cy + ob),
+          _GAUGE_ARC_START - 4, arc_end + 4, fill=(42, 42, 42), width=2)
+
     # Dark backing arc
     d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(30, 30, 30), width=22)
 
     # Subtle radial speed lines — speedometer texture behind the arc bands
     _draw_speed_lines(d, cx, cy, r)
+
+    # Expanding concentric ripples from the hub — subtle interior animation
+    for i in range(3):
+        rr = int((frame * 1.5 + i * 20) % 52)
+        if 2 <= rr <= 50:
+            rb = max(0, int(18 * (1 - rr / 52)))
+            if rb:
+                d.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), outline=(rb, rb, rb), width=1)
 
     dim = 0.30 if stale else 1.0
 
@@ -490,10 +500,13 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         lx, ly = cx + (r - 28) * ca, cy + (r - 28) * sa
         d.text((int(lx), int(ly)), lbl, fill=(165, 165, 165), font=font_label, anchor="mm")
 
+    # Dim "GUST" label in upper-center of gauge interior — context for the needle
+    d.text((cx, cy - 50), "GUST", fill=(48, 48, 48), font=font_label, anchor="mm")
+
     # Peak gust marker — bright tick just outside the arc at session-max position
     if history and len(history) >= 2 and not stale:
         peak = max(history)
-        if peak > needle_gust + 0.3:
+        if peak > actual_gust + 0.3:
             p_ang  = _gauge_ang(min(peak, GAUGE_MAX))
             p_ca, p_sa = math.cos(p_ang), math.sin(p_ang)
             po = (cx + (r + 4) * p_ca, cy + (r + 4) * p_sa)
@@ -552,10 +565,18 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         d.ellipse((int(tip[0]) - tr, int(tip[1]) - tr,
                    int(tip[0]) + tr, int(tip[1]) + tr), fill=tc)
 
-    # Pivot hub — three concentric rings for a mechanical look
+    # Pivot hub — three concentric rings; center dot colored by current zone
     d.ellipse((cx - 11, cy - 11, cx + 11, cy + 11), fill=(28, 28, 28), outline=(90, 90, 90), width=1)
     d.ellipse((cx -  8, cy -  8, cx +  8, cy +  8), fill=(18, 18, 18), outline=(55, 55, 55), width=1)
-    d.ellipse((cx -  5, cy -  5, cx +  5, cy +  5), fill=(210, 210, 210))
+    if stale:
+        hub_c = (90, 90, 90)
+    elif actual_gust > CAUTION_MPH:
+        hub_c = (220, 55, 55)
+    elif actual_gust > GOOD_MPH:
+        hub_c = (210, 170, 0)
+    else:
+        hub_c = (0, 180, 80)
+    d.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), fill=hub_c)
 
 
 def render_display(state, frame, needle_gust):
@@ -625,7 +646,7 @@ def render_display(state, frame, needle_gust):
 
     # Trend arrow at right margin, vertically centered on the gust row
     if trend is not None:
-        _draw_trend(d, device.width - 14, info_y + 89, trend)
+        _draw_trend(d, device.width - 16, info_y + 87, trend)
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     dir_tag  = f"  {wdir}" if wdir else ""
