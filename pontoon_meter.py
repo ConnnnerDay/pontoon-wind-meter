@@ -370,7 +370,9 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
     strip_h = 14
     y_mid = y0 + strip_h // 2
     d.rectangle([0, y0, device.width - 1, y0 + strip_h], fill=(18, 18, 18))
-    d.line([0, y0 + strip_h, device.width, y0 + strip_h], fill=(65, 65, 65))
+    sep_b = int(38 + 42 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.0))))
+    sep_c = tuple(min(255, int(c * sep_b / 255)) for c in status_color)
+    d.line([0, y0 + strip_h, device.width, y0 + strip_h], fill=sep_c)
 
     if not alerts:
         wave_color = tuple(max(0, c // 4) for c in status_color)
@@ -615,34 +617,51 @@ def render_display(state, frame, needle_gust):
     # Compass rose inside the arc — upper-left to clear the "18" label at upper-right
     _draw_compass(d, cx - 38, cy - 22, 14, wdir)
 
+    # Data freshness bar — centered horizontal line in the gauge mouth gap
+    if age is not None:
+        freshness = max(0.0, 1.0 - age / STALE_MINUTES)
+        bar_hw = int(42 * freshness)
+        if bar_hw > 0:
+            bright = max(14, int(40 * freshness))
+            by = info_y - 7
+            d.line([(cx - bar_hw, by), (cx + bar_hw, by)], fill=(bright, bright, bright), width=1)
+
     # Pulsing separator — slowly breathes in the accent color
     sep_p   = 0.25 + 0.75 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3)))
     sep_col = tuple(int(c * sep_p * 0.22) for c in accent)
     d.line([0, info_y - 4, device.width, info_y - 4], fill=sep_col)
 
-    # Row 1 — status word, pulsing fill for urgent states
+    # Row 1 — status word, pulsing fill for urgent states; grey when stale
     status_font = font_wide if msg == "TOO WINDY" else font_big
-    if msg == "TOO WINDY":
-        pv = int(55 * math.sin(frame * math.pi / (FRAME_RATE * 0.8)))
-    elif msg == "CAUTION":
-        pv = int(25 * math.sin(frame * math.pi / (FRAME_RATE * 1.5)))
+    if stale:
+        text_fill = (55, 55, 55)
     else:
-        pv = 0
-    text_fill = tuple(min(255, max(0, c + pv)) for c in accent)
+        if msg == "TOO WINDY":
+            pv = int(55 * math.sin(frame * math.pi / (FRAME_RATE * 0.8)))
+        elif msg == "CAUTION":
+            pv = int(25 * math.sin(frame * math.pi / (FRAME_RATE * 1.5)))
+        else:
+            pv = 0
+        text_fill = tuple(min(255, max(0, c + pv)) for c in accent)
     d.text((cx, info_y + 28), msg, fill=text_fill, font=status_font, anchor="mm")
 
-    # Row 2 — big gust number + "mph" unit side-by-side, centered as a group
-    if gust >= CAUTION_MPH:
+    # Row 2 — big gust number + "mph" unit; grey when stale
+    if stale:
+        gust_fill = (50, 50, 50)
+        mph_fill  = (40, 40, 40)
+    elif gust >= CAUTION_MPH:
         gp = 0.55 + 0.45 * math.sin(frame * math.pi / (FRAME_RATE * 1.0))
         gust_fill = tuple(min(255, int(c * gp)) for c in accent)
+        mph_fill  = (140, 140, 140)
     else:
         gust_fill = (220, 220, 220)
+        mph_fill  = (140, 140, 140)
     num_str = f"{gust:.1f}"
     num_w   = int(d.textlength(num_str, font=font_status))
     unit_w  = int(d.textlength("mph",   font=font_unit))
     grp_x   = (device.width - num_w - 8 - unit_w) // 2
-    d.text((grp_x,              info_y + 93),      num_str, fill=gust_fill,      font=font_status, anchor="lm")
-    d.text((grp_x + num_w + 8,  info_y + 93 + 18), "mph",   fill=(140, 140, 140), font=font_unit,   anchor="lm")
+    d.text((grp_x,              info_y + 93),      num_str, fill=gust_fill, font=font_status, anchor="lm")
+    d.text((grp_x + num_w + 8,  info_y + 93 + 18), "mph",   fill=mph_fill,  font=font_unit,   anchor="lm")
 
     # Trend arrow at right margin, vertically centered on the gust row
     if trend is not None:
@@ -815,13 +834,21 @@ def main():
             except Exception:
                 logging.exception("Error screen render failed")
         else:
-            # Animated connecting screen — pulsing dots while waiting for first data
+            # Animated connecting screen — spinning arc + pulsing text
             try:
-                dots = "." * ((frame // FRAME_RATE) % 4)
+                dots   = "." * ((frame // FRAME_RATE) % 4)
                 bright = int(60 + 30 * math.sin(frame * math.pi / (FRAME_RATE * 2)))
                 img, d = make_image()
-                draw_centered(d, 98,  "PONTOON WIND",      (bright, bright, bright),               font_title)
-                draw_centered(d, 118, f"Connecting{dots}", (bright - 20, bright - 20, bright - 20), font_data)
+                cx_s  = device.width // 2
+                spin  = (frame * 14) % 360
+                bc    = (bright, bright, bright)
+                d.arc((cx_s - 30, 110, cx_s + 30, 170), spin, spin + 115, fill=bc, width=3)
+                d.arc((cx_s - 30, 110, cx_s + 30, 170), spin + 115, spin + 230,
+                      fill=(bright // 4, bright // 4, bright // 4), width=2)
+                draw_centered(d, 185, "PONTOON WIND",
+                              (bright, bright, bright), font_title)
+                draw_centered(d, 204, f"Connecting{dots}",
+                              (bright - 20, bright - 20, bright - 20), font_data)
                 device.display(img)
             except Exception:
                 logging.exception("Connecting screen render failed")
