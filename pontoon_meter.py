@@ -78,12 +78,13 @@ def _load_bold(size):
     return _load_font(size)
 
 font_title  = _load_font(15)
-font_status = _load_bold(96)   # gust number — massive
+font_status = _load_bold(108)  # gust number — massive
 font_data   = _load_font(22)
 font_label  = _load_font(14)
 font_unit   = _load_bold(32)   # mph unit beside gust
-font_big    = _load_bold(64)   # status GOOD/CAUTION
+font_big    = _load_bold(64)   # status CAUTION
 font_wide   = _load_bold(48)   # status TOO WINDY (longer text)
+font_huge   = _load_bold(80)   # status GOOD (short word, max size)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -789,7 +790,9 @@ def render_display(state, frame, needle_gust):
     d.line([0, info_y - 4, device.width, info_y - 4], fill=sep_col)
 
     # Row 1 — status word, pulsing fill for urgent states; grey when stale
-    status_font = font_wide if msg == "TOO WINDY" else font_big
+    status_font = (font_huge if msg == "GOOD"
+                   else font_wide if msg == "TOO WINDY"
+                   else font_big)
     if stale:
         text_fill = (55, 55, 55)
     else:
@@ -805,11 +808,11 @@ def render_display(state, frame, needle_gust):
     if not stale and any(c > 0 for c in badge_bg):
         tw = int(d.textlength(msg, font=status_font))
         d.rounded_rectangle(
-            [cx - tw // 2 - 10, info_y + 2, cx + tw // 2 + 10, info_y + 50],
+            [cx - tw // 2 - 10, info_y + 1, cx + tw // 2 + 10, info_y + 46],
             radius=6, fill=badge_bg)
     vib_x = [-1, 0, 1, 0][frame % 4] if msg == "TOO WINDY" and not stale else 0
-    d.text((cx + 1,       info_y + 27), msg, fill=(0, 0, 0),  font=status_font, anchor="mm")
-    d.text((cx + vib_x,   info_y + 26), msg, fill=text_fill,  font=status_font, anchor="mm")
+    d.text((cx + 1,       info_y + 22), msg, fill=(0, 0, 0),  font=status_font, anchor="mm")
+    d.text((cx + vib_x,   info_y + 21), msg, fill=text_fill,  font=status_font, anchor="mm")
 
     # Row 2 — big gust number + "mph" unit; grey when stale
     if stale:
@@ -826,14 +829,14 @@ def render_display(state, frame, needle_gust):
     num_w   = int(d.textlength(num_str, font=font_status))
     unit_w  = int(d.textlength("mph",   font=font_unit))
     grp_x   = (device.width - num_w - 8 - unit_w) // 2
-    d.text((grp_x + 1,              info_y + 87),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
-    d.text((grp_x,              info_y + 86),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
-    d.text((grp_x + num_w + 9,  info_y + 86 + 13), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
-    d.text((grp_x + num_w + 8,  info_y + 86 + 12), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
+    d.text((grp_x + 1,              info_y + 82),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
+    d.text((grp_x,              info_y + 81),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
+    d.text((grp_x + num_w + 9,  info_y + 81 + 12), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
+    d.text((grp_x + num_w + 8,  info_y + 81 + 11), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
 
     # Trend arrow at right margin, vertically centered on the gust row
     if trend is not None:
-        _draw_trend(d, device.width - 16, info_y + 80, trend)
+        _draw_trend(d, device.width - 16, info_y + 75, trend)
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     dir_tag  = f"  {wdir}" if wdir else ""
