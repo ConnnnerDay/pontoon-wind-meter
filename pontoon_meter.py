@@ -81,6 +81,7 @@ font_title  = _load_font(15)
 font_status = _load_bold(108)  # gust number — massive
 font_data   = _load_font(22)
 font_label  = _load_font(14)
+font_strip  = _load_font(16)   # advisory strip (slightly larger than label)
 font_unit   = _load_bold(32)   # mph unit beside gust
 font_big    = _load_bold(64)   # status CAUTION
 font_wide   = _load_bold(48)   # status TOO WINDY (longer text)
@@ -154,13 +155,13 @@ def _trend(history):
 
 
 def _draw_trend(d, cx, y, trend):
-    """12 px tall directional indicator: up = rising, down = easing, dash = steady."""
+    """18 px tall directional indicator: up = rising, down = easing, dash = steady."""
     if trend == "up":
-        d.polygon([(cx, y), (cx - 6, y + 12), (cx + 6, y + 12)], fill=(240, 130, 0))
+        d.polygon([(cx, y), (cx - 8, y + 18), (cx + 8, y + 18)], fill=(240, 130, 0))
     elif trend == "down":
-        d.polygon([(cx, y + 12), (cx - 6, y), (cx + 6, y)], fill=(0, 145, 200))
+        d.polygon([(cx, y + 18), (cx - 8, y), (cx + 8, y)], fill=(0, 145, 200))
     else:
-        d.line([(cx - 7, y + 6), (cx + 7, y + 6)], fill=(85, 85, 85), width=2)
+        d.line([(cx - 9, y + 9), (cx + 9, y + 9)], fill=(85, 85, 85), width=3)
 
 
 def _draw_speed_lines(d, cx, cy, r):
@@ -404,13 +405,13 @@ def _draw_edge_accents(d, accent, frame):
     for x in range(3):
         fade = (3 - x) / 3.0
         col  = tuple(int(c * pulse * fade * 0.28) for c in accent)
-        d.line([(x, 14), (x, device.height - 1)], fill=col)
-        d.line([(device.width - 1 - x, 14), (device.width - 1 - x, device.height - 1)], fill=col)
+        d.line([(x, 18), (x, device.height - 1)], fill=col)
+        d.line([(device.width - 1 - x, 18), (device.width - 1 - x, device.height - 1)], fill=col)
 
 
 def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_str=None, age_minutes=None):
     """Top strip: cycles NOAA alerts; when quiet, rotates wind / marine / clock."""
-    strip_h = 14
+    strip_h = 18
     y_mid = y0 + strip_h // 2
     cx    = device.width // 2
     d.rectangle([0, y0, device.width - 1, y0 + strip_h], fill=(18, 18, 18))
@@ -430,10 +431,10 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
         kind, text = slots[idx]
         if kind == "wind":
             d.ellipse((3, y_mid - 3, 9, y_mid + 3), fill=(55, 115, 55))
-            d.text((cx, y_mid), text, fill=(175, 195, 175), font=font_label, anchor="mm")
+            d.text((cx, y_mid), text, fill=(175, 195, 175), font=font_strip, anchor="mm")
         elif kind == "marine":
             d.ellipse((3, y_mid - 3, 9, y_mid + 3), fill=(35, 70, 115))
-            d.text((cx, y_mid), text, fill=(110, 140, 160), font=font_label, anchor="mm")
+            d.text((cx, y_mid), text, fill=(110, 140, 160), font=font_strip, anchor="mm")
         else:
             _draw_marine_wave(d, frame, wave_color, y_mid)
             # Tiny clock icon at the left — matches the wind/marine dot position
@@ -443,10 +444,10 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
             time_str = time.strftime("%H:%M")
             if age_minutes is not None:
                 age_str = f"{int(age_minutes)}m"
-                d.text((cx - 4, y_mid), time_str, fill=(110, 110, 110), font=font_label, anchor="rm")
-                d.text((cx + 4, y_mid), age_str,  fill=(72, 72, 72),   font=font_label, anchor="lm")
+                d.text((cx - 4, y_mid), time_str, fill=(110, 110, 110), font=font_strip, anchor="rm")
+                d.text((cx + 4, y_mid), age_str,  fill=(72, 72, 72),   font=font_strip, anchor="lm")
             else:
-                d.text((cx, y_mid), time_str, fill=(110, 110, 110), font=font_label, anchor="mm")
+                d.text((cx, y_mid), time_str, fill=(110, 110, 110), font=font_strip, anchor="mm")
 
         # Horizontal slot progress dots at right edge
         n_slots = len(slots)
@@ -467,15 +468,15 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
     d.ellipse([7, y_mid - 5, 15, y_mid + 5], fill=dot_color)
 
     # Alert name, truncated to available width
-    text = _fit_text(d, name, font_label, device.width - 26)
-    d.text((21, y_mid), text, fill=color, font=font_label, anchor="lm")
+    text = _fit_text(d, name, font_strip, device.width - 26)
+    d.text((21, y_mid), text, fill=color, font=font_strip, anchor="lm")
 
     # Page indicator when there are multiple alerts
     if len(alerts) > 1:
         count_str = f"{idx + 1}/{len(alerts)}"
-        cw = int(d.textlength(count_str, font=font_label))
+        cw = int(d.textlength(count_str, font=font_strip))
         d.text((device.width - cw - 4, y_mid), count_str,
-               fill=(65, 65, 65), font=font_label, anchor="lm")
+               fill=(65, 65, 65), font=font_strip, anchor="lm")
 
 
 def _dim(color, factor):
@@ -748,8 +749,8 @@ def render_display(state, frame, needle_gust):
 
     img, d = make_image()
     r  = 80
-    # Advisory strip occupies y=0-14; gauge starts 14px below that
-    cy = 14 + 14 + (r + 11)
+    # Advisory strip occupies y=0-18; gauge starts 14px below that
+    cy = 18 + 14 + (r + 11)
     cx = device.width // 2
 
     # Pre-compute info_y so the background draws before gauge text
@@ -773,7 +774,7 @@ def render_display(state, frame, needle_gust):
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind, history=history)
 
     # Compass rose inside the arc — upper-left to clear the "18" label at upper-right
-    _draw_compass(d, cx - 38, cy - 22, 14, wdir)
+    _draw_compass(d, cx - 40, cy - 24, 17, wdir)
 
     # Data freshness bar — centered horizontal line in the gauge mouth gap
     if age is not None:
@@ -829,14 +830,14 @@ def render_display(state, frame, needle_gust):
     num_w   = int(d.textlength(num_str, font=font_status))
     unit_w  = int(d.textlength("mph",   font=font_unit))
     grp_x   = (device.width - num_w - 8 - unit_w) // 2
-    d.text((grp_x + 1,              info_y + 82),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
-    d.text((grp_x,              info_y + 81),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
-    d.text((grp_x + num_w + 9,  info_y + 81 + 12), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
-    d.text((grp_x + num_w + 8,  info_y + 81 + 11), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
+    d.text((grp_x + 1,              info_y + 78),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
+    d.text((grp_x,              info_y + 77),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
+    d.text((grp_x + num_w + 9,  info_y + 77 + 12), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
+    d.text((grp_x + num_w + 8,  info_y + 77 + 11), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
 
     # Trend arrow at right margin, vertically centered on the gust row
     if trend is not None:
-        _draw_trend(d, device.width - 16, info_y + 75, trend)
+        _draw_trend(d, device.width - 16, info_y + 71, trend)
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     dir_tag  = f"  {wdir}" if wdir else ""
