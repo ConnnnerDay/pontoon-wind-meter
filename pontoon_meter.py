@@ -344,6 +344,15 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
                 d.line([(x0 - sw, sy_s), (x0, sy_s - 2)], fill=sc_s, width=1)
                 d.line([(x0, sy_s - 2), (x0 + sw, sy_s)], fill=sc_s, width=1)
 
+        # Occasional lightning bolt — 2-frame flash every ~9 s
+        if (frame % (FRAME_RATE * 9)) < 2:
+            bolt_f = frame % (FRAME_RATE * 9)
+            lb  = int(160 * (1 - bolt_f / 2))
+            lc  = (int(lb * 0.55), int(lb * 0.70), lb)
+            lbx = device.width // 3
+            d.line([(lbx,      y_top +  8), (lbx - 10, y_top + 42)], fill=lc, width=2)
+            d.line([(lbx - 10, y_top + 42), (lbx +  8, y_top + 80)], fill=lc, width=2)
+
     else:   # TOO WINDY — horizontal wind streaks + periodic red alarm flash
         # Brief alarm flash every ~10 s — red wash fades in/out over 4 frames
         flash = (frame * 2) % 100
@@ -596,7 +605,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         ang = _gauge_ang(mph_val)
         ca, sa = math.cos(ang), math.sin(ang)
         lx, ly = cx + (r - 28) * ca, cy + (r - 28) * sa
-        d.text((int(lx), int(ly)), lbl, fill=(165, 165, 165), font=font_label, anchor="mm")
+        d.text((int(lx), int(ly)), lbl, fill=(155, 155, 155), font=font_data, anchor="mm")
 
     # Dim "GUST" label in upper-center of gauge interior — context for the needle
     d.text((cx, cy - 50), "GUST", fill=(48, 48, 48), font=font_label, anchor="mm")
@@ -633,6 +642,28 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         d.polygon([(wx, wy - ds), (wx + ds, wy), (wx, wy + ds), (wx - ds, wy)],
                   fill=(45, 45, 45), outline=(145, 145, 145))
         d.text((cx, cy + 26), f"avg {wind:.0f}", fill=(90, 90, 90), font=font_data, anchor="mm")
+
+    # Tiny gust history sparkline below avg text — oldest left, newest right
+    if history and len(history) >= 2 and not stale:
+        pts  = list(reversed(history[:6]))
+        n    = len(pts)
+        sx0, sx1 = cx - 34, cx + 34
+        syc  = cy + 48
+        h_sp = 6
+        maxv = max(max(pts) * 1.05, GOOD_MPH + 1)
+        for j in range(n - 1):
+            px0 = sx0 + j * (sx1 - sx0) // (n - 1)
+            px1 = sx0 + (j + 1) * (sx1 - sx0) // (n - 1)
+            py0 = syc - int(pts[j]     / maxv * h_sp)
+            py1 = syc - int(pts[j + 1] / maxv * h_sp)
+            v   = pts[j]
+            sc  = ((0, 50, 22) if v < GOOD_MPH
+                   else ((80, 62, 0) if v <= CAUTION_MPH else (80, 14, 14)))
+            d.line([(px0, py0), (px1, py1)], fill=sc, width=1)
+        last_y = syc - int(pts[-1] / maxv * h_sp)
+        dot_c  = ((0, 140, 60) if pts[-1] < GOOD_MPH
+                  else ((160, 124, 0) if pts[-1] <= CAUTION_MPH else (160, 28, 28)))
+        d.ellipse((sx1 - 2, last_y - 2, sx1 + 2, last_y + 2), fill=dot_c)
 
     # Kite-shaped needle — soft glow arc at its angle for a back-lit instrument feel
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
