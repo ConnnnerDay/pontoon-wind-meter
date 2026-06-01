@@ -488,8 +488,10 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     d.arc((cx - ob, cy - ob, cx + ob, cy + ob),
           _GAUGE_ARC_START - 4, arc_end + 4, fill=(42, 42, 42), width=2)
 
-    # Dark backing arc
-    d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(30, 30, 30), width=22)
+    # Dark backing arc — layered to create a subtle cross-section depth
+    d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(20, 20, 20), width=22)
+    d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(36, 36, 36), width=14)
+    d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(24, 24, 24), width=6)
 
     # Subtle radial speed lines — speedometer texture behind the arc bands
     _draw_speed_lines(d, cx, cy, r)
@@ -578,6 +580,10 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
                    fill=(220, 200, 55), width=2)
 
     if stale:
+        # Radar-style scanning sweep suggests the gauge is waiting for fresh data
+        sweep_pos = _GAUGE_ARC_START + (frame * 3) % _GAUGE_ARC_SWEEP
+        trail_s   = max(_GAUGE_ARC_START, sweep_pos - 28)
+        d.arc(box, trail_s, sweep_pos, fill=(0, 22, 11), width=14)
         d.text((cx, cy), "STALE", fill=(55, 55, 55), font=font_label, anchor="mm")
 
     # Sustained avg wind: diamond marker on the arc at r-10, plus tiny readout below hub
@@ -594,6 +600,9 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     # Kite-shaped needle — soft glow arc at its angle for a back-lit instrument feel
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
     ang = _gauge_ang(pct * GAUGE_MAX)
+    # High-wind tremor: needle vibrates when in the red zone, simulating turbulence
+    if not stale and actual_gust > CAUTION_MPH:
+        ang += math.radians(1.5 * math.sin(frame * math.pi / (FRAME_RATE * 0.10)))
     if not stale and needle_gust > 0.1:
         glow_ang = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
         glow_c   = ((0, 28, 14) if needle_gust < GOOD_MPH
@@ -712,7 +721,9 @@ def render_display(state, frame, needle_gust):
         else:
             pv = 0
         text_fill = tuple(min(255, max(0, c + pv)) for c in accent)
-    d.text((cx, info_y + 28), msg, fill=text_fill, font=status_font, anchor="mm")
+    vib_x = [-1, 0, 1, 0][frame % 4] if msg == "TOO WINDY" and not stale else 0
+    d.text((cx + 1,       info_y + 29), msg, fill=(0, 0, 0),  font=status_font, anchor="mm")
+    d.text((cx + vib_x,   info_y + 28), msg, fill=text_fill,  font=status_font, anchor="mm")
 
     # Row 2 — big gust number + "mph" unit; grey when stale
     if stale:
@@ -729,8 +740,10 @@ def render_display(state, frame, needle_gust):
     num_w   = int(d.textlength(num_str, font=font_status))
     unit_w  = int(d.textlength("mph",   font=font_unit))
     grp_x   = (device.width - num_w - 8 - unit_w) // 2
-    d.text((grp_x,              info_y + 93),      num_str, fill=gust_fill, font=font_status, anchor="lm")
-    d.text((grp_x + num_w + 8,  info_y + 93 + 18), "mph",   fill=mph_fill,  font=font_unit,   anchor="lm")
+    d.text((grp_x + 1,              info_y + 94),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
+    d.text((grp_x,              info_y + 93),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
+    d.text((grp_x + num_w + 9,  info_y + 93 + 19), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
+    d.text((grp_x + num_w + 8,  info_y + 93 + 18), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
 
     # Trend arrow at right margin, vertically centered on the gust row
     if trend is not None:
@@ -930,9 +943,11 @@ def main():
                 d.arc((cx_s - 30, 110, cx_s + 30, 170), spin, spin + 115, fill=bc, width=3)
                 d.arc((cx_s - 30, 110, cx_s + 30, 170), spin + 115, spin + 230,
                       fill=(bright // 4, bright // 4, bright // 4), width=2)
-                draw_centered(d, 185, "PONTOON WIND",
+                draw_centered(d, 182, "PONTOON WIND",
                               (bright, bright, bright), font_title)
-                draw_centered(d, 204, f"Connecting{dots}",
+                draw_centered(d, 198, "NDBC 41038 · Cape Fear",
+                              (bright // 2, bright // 2, bright // 2), font_label)
+                draw_centered(d, 216, f"Connecting{dots}",
                               (bright - 20, bright - 20, bright - 20), font_data)
                 device.display(img)
             except Exception:
