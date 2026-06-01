@@ -78,12 +78,12 @@ def _load_bold(size):
     return _load_font(size)
 
 font_title  = _load_font(15)
-font_status = _load_bold(72)   # gust number — massive
+font_status = _load_bold(88)   # gust number — massive
 font_data   = _load_font(22)
 font_label  = _load_font(14)
-font_unit   = _load_bold(26)   # mph unit beside gust
-font_big    = _load_bold(56)   # status GOOD/CAUTION
-font_wide   = _load_bold(44)   # status TOO WINDY (longer text)
+font_unit   = _load_bold(32)   # mph unit beside gust
+font_big    = _load_bold(64)   # status GOOD/CAUTION
+font_wide   = _load_bold(48)   # status TOO WINDY (longer text)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -770,8 +770,8 @@ def render_display(state, frame, needle_gust):
             pv = 0
         text_fill = tuple(min(255, max(0, c + pv)) for c in accent)
     vib_x = [-1, 0, 1, 0][frame % 4] if msg == "TOO WINDY" and not stale else 0
-    d.text((cx + 1,       info_y + 29), msg, fill=(0, 0, 0),  font=status_font, anchor="mm")
-    d.text((cx + vib_x,   info_y + 28), msg, fill=text_fill,  font=status_font, anchor="mm")
+    d.text((cx + 1,       info_y + 27), msg, fill=(0, 0, 0),  font=status_font, anchor="mm")
+    d.text((cx + vib_x,   info_y + 26), msg, fill=text_fill,  font=status_font, anchor="mm")
 
     # Row 2 — big gust number + "mph" unit; grey when stale
     if stale:
@@ -788,14 +788,14 @@ def render_display(state, frame, needle_gust):
     num_w   = int(d.textlength(num_str, font=font_status))
     unit_w  = int(d.textlength("mph",   font=font_unit))
     grp_x   = (device.width - num_w - 8 - unit_w) // 2
-    d.text((grp_x + 1,              info_y + 94),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
-    d.text((grp_x,              info_y + 93),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
-    d.text((grp_x + num_w + 9,  info_y + 93 + 19), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
-    d.text((grp_x + num_w + 8,  info_y + 93 + 18), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
+    d.text((grp_x + 1,              info_y + 91),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
+    d.text((grp_x,              info_y + 90),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
+    d.text((grp_x + num_w + 9,  info_y + 90 + 13), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
+    d.text((grp_x + num_w + 8,  info_y + 90 + 12), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
 
     # Trend arrow at right margin, vertically centered on the gust row
     if trend is not None:
-        _draw_trend(d, device.width - 16, info_y + 87, trend)
+        _draw_trend(d, device.width - 16, info_y + 84, trend)
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     dir_tag  = f"  {wdir}" if wdir else ""
