@@ -335,6 +335,14 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
                 frame * math.pi / (FRAME_RATE * 1.5) + i * math.pi / 5))
             rc = (int(bright * 0.35), int(bright * 0.50), int(bright * 0.80))
             d.line([(x0, y0c), (x1, y1c)], fill=rc, width=2)
+            # Splash V-mark when drop reaches the bottom of the info section
+            if y1 >= y_bot - 5:
+                sp = min(1.0, (y1 - (y_bot - 5)) / 5)
+                sw = max(1, int(4 * sp))
+                sy_s = min(y_bot - 1, y0 + 10)
+                sc_s = (int(rc[0] * 0.5), int(rc[1] * 0.5), int(rc[2] * 0.5))
+                d.line([(x0 - sw, sy_s), (x0, sy_s - 2)], fill=sc_s, width=1)
+                d.line([(x0, sy_s - 2), (x0 + sw, sy_s)], fill=sc_s, width=1)
 
     else:   # TOO WINDY — horizontal wind streaks + periodic red alarm flash
         # Brief alarm flash every ~10 s — red wash fades in/out over 4 frames
@@ -507,6 +515,17 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END,  fill=_dim(_YELLOW, dim), width=16)
     d.arc(box, CAUTION_ARC_END, arc_end,          fill=_dim(_RED,    dim), width=16)
 
+    # Pulsing overlay on the currently-active zone arc — breathes to indicate live zone
+    if not stale:
+        zp = 0.12 + 0.10 * math.sin(frame * math.pi / (FRAME_RATE * 1.8))
+        if needle_gust < GOOD_MPH:
+            za_s, za_e, zc = _GAUGE_ARC_START, GOOD_ARC_END, _GREEN
+        elif needle_gust <= CAUTION_MPH:
+            za_s, za_e, zc = GOOD_ARC_END, CAUTION_ARC_END, _YELLOW
+        else:
+            za_s, za_e, zc = CAUTION_ARC_END, arc_end, _RED
+        d.arc(box, za_s, za_e, fill=_dim(zc, zp), width=26)
+
     # Bright narrow trace from 0 to current needle — highlights the swept arc
     if needle_gust > 0.1 and not stale:
         na_end  = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
@@ -572,9 +591,15 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
                   fill=(45, 45, 45), outline=(145, 145, 145))
         d.text((cx, cy + 24), f"avg {wind:.0f}", fill=(72, 72, 72), font=font_label, anchor="mm")
 
-    # Kite-shaped needle
+    # Kite-shaped needle — soft glow arc at its angle for a back-lit instrument feel
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
     ang = _gauge_ang(pct * GAUGE_MAX)
+    if not stale and needle_gust > 0.1:
+        glow_ang = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
+        glow_c   = ((0, 28, 14) if needle_gust < GOOD_MPH
+                    else ((32, 24, 0) if needle_gust <= CAUTION_MPH
+                          else (32, 6, 6)))
+        d.arc(box, glow_ang - 7, glow_ang + 7, fill=glow_c, width=22)
     ca, sa = math.cos(ang), math.sin(ang)
     perp = ang - math.pi / 2
     cp, sp = math.cos(perp), math.sin(perp)
@@ -731,9 +756,12 @@ def render_display(state, frame, needle_gust):
     # Pulsing accent strips framing the left/right screen edges
     _draw_edge_accents(d, accent, frame)
 
-    # Thin accent line at screen bottom — completes the edge framing
-    d.line([0, device.height - 1, device.width - 1, device.height - 1],
-           fill=tuple(c // 6 for c in accent))
+    # Animated wave at screen bottom — completes the edge framing
+    accent_dim  = tuple(c // 6 for c in accent)
+    bwave_off   = (frame * 3) % 22
+    for bx in range(device.width):
+        by = device.height - 1 - int(1.5 * math.sin(2 * math.pi * (bx + bwave_off) / 22))
+        d.point((bx, by), fill=accent_dim)
 
     # Top strip: NOAA advisories → wind → marine → clock/wave
     _draw_alert_strip(d, alerts, frame, accent, y0=0,
