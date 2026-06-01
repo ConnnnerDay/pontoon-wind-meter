@@ -1,6 +1,7 @@
 from luma.core.interface.serial import spi
 from luma.lcd.device import ili9341
 from PIL import Image, ImageDraw, ImageFont
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.request import urlopen, Request
 import json
 import logging
@@ -21,6 +22,7 @@ ALERTS_URL      = "https://api.weather.gov/alerts/active?point=34.2108,-77.5986"
 POLL_INTERVAL   = 300   # seconds between NDBC refreshes
 ALERTS_INTERVAL = 600   # seconds between alert refreshes
 FRAME_RATE      = 5     # display frames per second
+WEB_PORT        = 8080  # iframe dashboard HTTP port
 GAUGE_MAX       = 25    # mph, full-scale
 GOOD_MPH        = 12
 CAUTION_MPH     = 18
@@ -980,9 +982,182 @@ def _data_loop():
         time.sleep(max(0.0, POLL_INTERVAL - elapsed))
 
 
+def _web_html(state):
+    """Render the iframe dashboard page from a snapshot of _state."""
+    gust    = state.get("gust")
+    wind    = state.get("wind")
+    wdir    = state.get("wdir") or "---"
+    age     = state.get("age")
+    wtmp    = state.get("wtmp")
+    atmp    = state.get("atmp")
+    wvht    = state.get("wvht")
+    alerts  = state.get("alerts", [])
+    history = state.get("gust_history", [])
+
+    stale = age is not None and age >= STALE_MINUTES
+    trend = _trend(history)
+
+    if gust is None:
+        status, sc, glow, badge_bg = "OFFLINE", "#555", "#111", "#1a1a1a"
+    elif gust < GOOD_MPH:
+        status, sc, glow, badge_bg = "GOOD",      "#00a046", "rgba(0,160,70,0.3)",  "#003716"
+    elif gust <= CAUTION_MPH:
+        status, sc, glow, badge_bg = "CAUTION",   "#d2a500", "rgba(210,165,0,0.3)", "#3a2d00"
+    else:
+        status, sc, glow, badge_bg = "TOO WINDY", "#d22828", "rgba(210,40,40,0.3)", "#3e0c0c"
+    if stale:
+        sc, glow, badge_bg = "#555", "#111", "#1a1a1a"
+
+    gust_str = f"{gust:.1f}" if gust is not None else "--"
+    wind_str = f"{wind:.1f}" if wind is not None else "--"
+
+    trend_span = {"up":     "<span style='color:#f08200;margin-left:5px'>▲</span>",
+                  "down":   "<span style='color:#0091c8;margin-left:5px'>▼</span>",
+                  "steady": "<span style='color:#555;margin-left:5px'>▬</span>"}.get(trend or "", "")
+
+    sec_parts = []
+    if wdir and wdir != "---":
+        sec_parts.append(f"Dir: {wdir}")
+    if wtmp is not None:
+        sec_parts.append(f"Water {wtmp:.0f}°F")
+    if atmp is not None:
+        sec_parts.append(f"Air {atmp:.0f}°F")
+    if wvht is not None:
+        sec_parts.append(f"Waves {wvht:.1f}ft")
+    sec_html = "  ·  ".join(sec_parts) or "&nbsp;"
+
+    age_col  = "#996" if stale else "#444"
+    age_html = f"<span style='color:{age_col}'>{int(age)}m ago</span>" if age is not None else ""
+
+    alert_html = ""
+    if alerts:
+        a_col = {"Extreme": "#e05050", "Severe": "#e05050",
+                 "Moderate": "#dc6e00", "Minor": "#d2a500"}.get(alerts[0][1], "#d2a500")
+        alert_html = (f'<div style="background:#1e0a0a;border-left:3px solid {a_col};'
+                      f'padding:3px 8px;margin-top:6px;border-radius:2px;font-size:0.72em;'
+                      f'color:{a_col};overflow:hidden;white-space:nowrap;text-overflow:ellipsis">'
+                      f'⚠ {alerts[0][0]}</div>')
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pontoon Wind</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0d0d0d;color:#ddd;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+     padding:10px 14px;min-height:100vh;display:flex;flex-direction:column;justify-content:center;gap:0}}
+.badge{{display:inline-block;background:{badge_bg};color:{sc};font-size:0.72em;font-weight:700;
+        letter-spacing:0.14em;padding:3px 10px;border-radius:4px;border:1px solid {sc}44;
+        margin-bottom:8px;width:fit-content}}
+.gust-row{{display:flex;align-items:baseline;gap:4px;margin-bottom:1px}}
+.gust{{font-size:3.8em;font-weight:700;color:{sc};line-height:1;filter:drop-shadow(0 0 12px {glow})}}
+.gust-unit{{font-size:1.1em;color:#666;align-self:flex-end;padding-bottom:4px}}
+.avg{{font-size:0.82em;color:#555;margin-bottom:4px}}
+.secondary{{font-size:0.76em;color:#484848;margin-bottom:4px}}
+.footer{{display:flex;justify-content:space-between;align-items:center;margin-top:auto;padding-top:4px}}
+.station{{font-size:0.64em;color:#282828}}
+.age{{font-size:0.64em}}
+</style>
+</head>
+<body>
+<div class="badge" id="badge">{status}</div>
+<div class="gust-row">
+  <span class="gust" id="gust">{gust_str}</span>
+  <span class="gust-unit" id="gust-unit">mph gust{trend_span}</span>
+</div>
+<div class="avg" id="avg">Avg {wind_str} mph</div>
+<div class="secondary" id="sec">{sec_html}</div>
+{alert_html}
+<div class="footer">
+  <span class="station">NDBC 41038 · Cape Fear</span>
+  <span class="age" id="age">{age_html}</span>
+</div>
+<script>
+var SC={{"GOOD":"#00a046","CAUTION":"#d2a500","TOO WINDY":"#d22828","OFFLINE":"#555"}};
+var BB={{"GOOD":"#003716","CAUTION":"#3a2d00","TOO WINDY":"#3e0c0c","OFFLINE":"#1a1a1a"}};
+var TR={{"up":"<span style='color:#f08200;margin-left:5px'>\\u25b2</span>",
+         "down":"<span style='color:#0091c8;margin-left:5px'>\\u25bc</span>",
+         "steady":"<span style='color:#555;margin-left:5px'>\\u25ac</span>"}};
+function f1(v){{return v!=null?v.toFixed(1):"--"}}
+function f0(v){{return v!=null?Math.round(v)+"°F":"--"}}
+function poll(){{
+  fetch("/data").then(r=>r.json()).then(d=>{{
+    var sc=d.stale?"#555":(SC[d.status]||"#555");
+    var bb=d.stale?"#1a1a1a":(BB[d.status]||"#1a1a1a");
+    var b=document.getElementById("badge");
+    b.textContent=d.status; b.style.color=sc; b.style.borderColor=sc+"44"; b.style.background=bb;
+    document.getElementById("gust").textContent=f1(d.gust);
+    document.getElementById("gust").style.color=sc;
+    document.getElementById("gust-unit").innerHTML="mph gust"+(TR[d.trend]||"");
+    document.getElementById("avg").textContent="Avg "+f1(d.wind)+" mph";
+    var s=[];
+    if(d.wdir&&d.wdir!="---")s.push("Dir: "+d.wdir);
+    if(d.wtmp!=null)s.push("Water "+f0(d.wtmp));
+    if(d.atmp!=null)s.push("Air "+f0(d.atmp));
+    if(d.wvht!=null)s.push("Waves "+f1(d.wvht)+"ft");
+    document.getElementById("sec").textContent=s.join("  ·  ")||" ";
+    var ae=document.getElementById("age");
+    ae.innerHTML=d.age!=null?"<span style='color:"+(d.stale?"#996":"#444")+"'>"+Math.round(d.age)+"m ago</span>":"";
+  }}).catch(()=>{{}});
+  setTimeout(poll,30000);
+}}
+setTimeout(poll,30000);
+</script>
+</body>
+</html>"""
+
+
+class _WebHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/data":
+            with _lock:
+                s = dict(_state)
+                s["alerts"]       = list(_state["alerts"])
+                s["gust_history"] = list(_state["gust_history"])
+            g = s.get("gust")
+            s["status"] = ("GOOD"      if g is not None and g < GOOD_MPH
+                           else "CAUTION"   if g is not None and g <= CAUTION_MPH
+                           else "TOO WINDY" if g is not None
+                           else "OFFLINE")
+            s["stale"]  = s.get("age") is not None and s["age"] >= STALE_MINUTES
+            s["trend"]  = _trend(s["gust_history"])
+            s["alerts"] = [[a, b] for a, b in s["alerts"]]
+            body = json.dumps(s).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            with _lock:
+                s = dict(_state)
+                s["alerts"]       = list(_state["alerts"])
+                s["gust_history"] = list(_state["gust_history"])
+            body = _web_html(s).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    def log_message(self, *_args):
+        pass  # suppress per-request log noise
+
+
+def _start_web_server():
+    class _Server(HTTPServer):
+        allow_reuse_address = True
+    server = _Server(("", WEB_PORT), _WebHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    logging.info("Web dashboard on http://0.0.0.0:%d/", WEB_PORT)
+
+
 def main():
     global _needle_gust, _needle_vel
 
+    _start_web_server()
     threading.Thread(target=_data_loop, daemon=True).start()
 
     frame = 0
