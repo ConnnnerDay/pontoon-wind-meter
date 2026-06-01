@@ -483,10 +483,17 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     box = (cx - r, cy - r, cx + r, cy + r)
     arc_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
 
-    # Outer border ring — thin arc framing the instrument face
+    # Outer border ring — pulses in the zone's accent color when live
     ob  = r + 10
+    if stale:
+        ob_col = (42, 42, 42)
+    else:
+        zone_c = (_GREEN if actual_gust < GOOD_MPH
+                  else (_YELLOW if actual_gust <= CAUTION_MPH else _RED))
+        ob_p   = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.5)))
+        ob_col = tuple(max(16, int(c * ob_p * 0.20)) for c in zone_c)
     d.arc((cx - ob, cy - ob, cx + ob, cy + ob),
-          _GAUGE_ARC_START - 4, arc_end + 4, fill=(42, 42, 42), width=2)
+          _GAUGE_ARC_START - 4, arc_end + 4, fill=ob_col, width=2)
 
     # Dark backing arc — layered to create a subtle cross-section depth
     d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(20, 20, 20), width=22)
@@ -496,13 +503,21 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     # Subtle radial speed lines — speedometer texture behind the arc bands
     _draw_speed_lines(d, cx, cy, r)
 
-    # Expanding concentric ripples from the hub — subtle interior animation
+    # Expanding concentric ripples from the hub — tinted by current wind zone
     for i in range(3):
         rr = int((frame * 1.5 + i * 20) % 52)
         if 2 <= rr <= 50:
-            rb = max(0, int(18 * (1 - rr / 52)))
+            rb = max(0, int(20 * (1 - rr / 52)))
             if rb:
-                d.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), outline=(rb, rb, rb), width=1)
+                if stale:
+                    rp_c = (rb, rb, rb)
+                elif actual_gust < GOOD_MPH:
+                    rp_c = (0, rb, rb // 2)
+                elif actual_gust <= CAUTION_MPH:
+                    rp_c = (rb, int(rb * 0.65), 0)
+                else:
+                    rp_c = (rb, 0, 0)
+                d.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), outline=rp_c, width=1)
 
     dim = 0.30 if stale else 1.0
 
@@ -539,9 +554,10 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     # Animated wind streaks flowing inside the arc face
     _draw_wind_streaks(d, cx, cy, r, actual_gust, frame)
 
-    # Tick marks — colored by zone for instant zone-boundary feedback
-    tick_outer = r - 8
-    tick_inner = r - 18
+    # Tick marks — colored by zone; ticks near the needle glow brighter
+    tick_outer  = r - 8
+    tick_inner  = r - 18
+    needle_deg  = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
     for mph_val in range(0, GAUGE_MAX + 1, 5):
         ang = _gauge_ang(mph_val)
         ca, sa = math.cos(ang), math.sin(ang)
@@ -555,6 +571,11 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
             tick_c = _dim(_YELLOW, t_dim)
         else:
             tick_c = _dim(_RED, t_dim)
+        if not stale and needle_gust > 0:
+            tick_deg = _GAUGE_ARC_START + (mph_val / GAUGE_MAX) * _GAUGE_ARC_SWEEP
+            prox = max(0.0, 1.0 - abs(tick_deg - needle_deg) / 14.0)
+            if prox > 0:
+                tick_c = tuple(min(255, int(c + 110 * prox)) for c in tick_c)
         d.line([(int(x1), int(y1)), (int(x2), int(y2))],
                fill=tick_c, width=2 if is_major else 1)
 
@@ -690,6 +711,17 @@ def render_display(state, frame, needle_gust):
     _draw_info_bg(d, info_y, device.height - 1, msg, frame)
 
     stale = age is not None and age >= STALE_MINUTES
+
+    # Pulsing halo arcs just outside the gauge — tinted by status, very dim
+    if not stale:
+        halo_p   = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3.0)))
+        halo_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
+        for h_off, h_fac in ((r + 17, 0.13), (r + 24, 0.07)):
+            hc = tuple(max(0, int(c * h_fac * halo_p)) for c in accent)
+            if any(v > 0 for v in hc):
+                d.arc((cx - h_off, cy - h_off, cx + h_off, cy + h_off),
+                      _GAUGE_ARC_START - 8, halo_end + 8, fill=hc, width=2)
+
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind, history=history)
 
     # Compass rose inside the arc — upper-left to clear the "18" label at upper-right
