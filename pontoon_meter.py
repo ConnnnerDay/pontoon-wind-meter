@@ -503,6 +503,18 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     # Subtle radial speed lines — speedometer texture behind the arc bands
     _draw_speed_lines(d, cx, cy, r)
 
+    # GOOD-state inner sunburst — dim rotating rays in the clear interior of the gauge face
+    if not stale and actual_gust < GOOD_MPH:
+        ray_rot = (frame * 1.5) % 360
+        for i in range(12):
+            ang_r = math.radians(ray_rot + i * 30)
+            ca_r, sa_r = math.cos(ang_r), math.sin(ang_r)
+            b = int(9 + 5 * math.sin(frame * math.pi / (FRAME_RATE * 2.5) + i * math.pi / 6))
+            d.line([
+                (int(cx + 20 * ca_r), int(cy + 20 * sa_r)),
+                (int(cx + 48 * ca_r), int(cy + 48 * sa_r))
+            ], fill=(0, b, b // 3), width=1)
+
     # Expanding concentric ripples from the hub — tinted by current wind zone
     for i in range(3):
         rr = int((frame * 1.5 + i * 20) % 52)
@@ -599,6 +611,10 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
             pi = (cx + (r - 4) * p_ca, cy + (r - 4) * p_sa)
             d.line([(int(po[0]), int(po[1])), (int(pi[0]), int(pi[1]))],
                    fill=(220, 200, 55), width=2)
+            # Value label just outside the arc edge at the peak position
+            lx = int(cx + (r + 15) * p_ca)
+            ly = int(cy + (r + 15) * p_sa)
+            d.text((lx, ly), f"{peak:.0f}", fill=(140, 120, 28), font=font_label, anchor="mm")
 
     if stale:
         # Radar-style scanning sweep suggests the gauge is waiting for fresh data
@@ -761,14 +777,14 @@ def render_display(state, frame, needle_gust):
     if stale:
         gust_fill = (50, 50, 50)
         mph_fill  = (40, 40, 40)
-    elif gust >= CAUTION_MPH:
+    elif needle_gust >= CAUTION_MPH:
         gp = 0.55 + 0.45 * math.sin(frame * math.pi / (FRAME_RATE * 1.0))
         gust_fill = tuple(min(255, int(c * gp)) for c in accent)
         mph_fill  = (140, 140, 140)
     else:
         gust_fill = (220, 220, 220)
         mph_fill  = (140, 140, 140)
-    num_str = f"{gust:.1f}"
+    num_str = f"{needle_gust:.1f}"
     num_w   = int(d.textlength(num_str, font=font_status))
     unit_w  = int(d.textlength("mph",   font=font_unit))
     grp_x   = (device.width - num_w - 8 - unit_w) // 2
@@ -975,6 +991,9 @@ def main():
                 d.arc((cx_s - 30, 110, cx_s + 30, 170), spin, spin + 115, fill=bc, width=3)
                 d.arc((cx_s - 30, 110, cx_s + 30, 170), spin + 115, spin + 230,
                       fill=(bright // 4, bright // 4, bright // 4), width=2)
+                spin2 = (360 - frame * 9) % 360
+                d.arc((cx_s - 18, 122, cx_s + 18, 158), spin2, spin2 + 80,
+                      fill=(bright // 3, bright // 3, bright // 3), width=2)
                 draw_centered(d, 182, "PONTOON WIND",
                               (bright, bright, bright), font_title)
                 draw_centered(d, 198, "NDBC 41038 · Cape Fear",
