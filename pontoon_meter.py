@@ -78,7 +78,7 @@ def _load_bold(size):
     return _load_font(size)
 
 font_title  = _load_font(15)
-font_status = _load_bold(88)   # gust number — massive
+font_status = _load_bold(96)   # gust number — massive
 font_data   = _load_font(22)
 font_label  = _load_font(14)
 font_unit   = _load_bold(32)   # mph unit beside gust
@@ -287,22 +287,22 @@ def _draw_weather_icon(d, x, y, status, frame, r=18):
 def _draw_info_bg(d, y_top, y_bot, status, frame):
     """Animated background texture drawn behind the info-section text."""
     if status == "GOOD":
-        wl     = 80
-        amp    = 4
-        scroll = (frame * 2) % wl
-        for i, (wy_off, wc) in enumerate([
-            (18, (0, 58, 38)),
-            (50, (0, 46, 30)),
-            (78, (0, 34, 22)),
-            (106, (0, 24, 16)),
+        scroll = (frame * 2) % 80
+        for i, (wy_off, wc, wl_i, amp_i) in enumerate([
+            (10,  (0, 62, 40), 70, 3),
+            (30,  (0, 54, 35), 90, 5),
+            (52,  (0, 46, 30), 80, 4),
+            (74,  (0, 38, 25), 65, 3),
+            (96,  (0, 30, 20), 80, 4),
+            (118, (0, 22, 15), 95, 5),
         ]):
             wy = y_top + wy_off
             if wy >= y_bot:
                 continue
-            ph   = i * (wl // 4)
+            ph   = i * 17
             prev = None
             for px in range(device.width + 1):
-                sy = wy + int(amp * math.sin(2 * math.pi * (px + scroll + ph) / wl))
+                sy = wy + int(amp_i * math.sin(2 * math.pi * (px + scroll + ph) / wl_i))
                 if prev:
                     d.line([prev, (px, sy)], fill=wc, width=1)
                 prev = (px, sy)
@@ -632,7 +632,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         ds = 4
         d.polygon([(wx, wy - ds), (wx + ds, wy), (wx, wy + ds), (wx - ds, wy)],
                   fill=(45, 45, 45), outline=(145, 145, 145))
-        d.text((cx, cy + 24), f"avg {wind:.0f}", fill=(72, 72, 72), font=font_label, anchor="mm")
+        d.text((cx, cy + 26), f"avg {wind:.0f}", fill=(90, 90, 90), font=font_data, anchor="mm")
 
     # Kite-shaped needle — soft glow arc at its angle for a back-lit instrument feel
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
@@ -769,6 +769,13 @@ def render_display(state, frame, needle_gust):
         else:
             pv = 0
         text_fill = tuple(min(255, max(0, c + pv)) for c in accent)
+    # Dark badge behind status word — gives the text a solid background
+    _, badge_bg = _STATUS_CONFIG[msg]
+    if not stale and any(c > 0 for c in badge_bg):
+        tw = int(d.textlength(msg, font=status_font))
+        d.rounded_rectangle(
+            [cx - tw // 2 - 10, info_y + 2, cx + tw // 2 + 10, info_y + 50],
+            radius=6, fill=badge_bg)
     vib_x = [-1, 0, 1, 0][frame % 4] if msg == "TOO WINDY" and not stale else 0
     d.text((cx + 1,       info_y + 27), msg, fill=(0, 0, 0),  font=status_font, anchor="mm")
     d.text((cx + vib_x,   info_y + 26), msg, fill=text_fill,  font=status_font, anchor="mm")
@@ -788,14 +795,14 @@ def render_display(state, frame, needle_gust):
     num_w   = int(d.textlength(num_str, font=font_status))
     unit_w  = int(d.textlength("mph",   font=font_unit))
     grp_x   = (device.width - num_w - 8 - unit_w) // 2
-    d.text((grp_x + 1,              info_y + 91),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
-    d.text((grp_x,              info_y + 90),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
-    d.text((grp_x + num_w + 9,  info_y + 90 + 13), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
-    d.text((grp_x + num_w + 8,  info_y + 90 + 12), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
+    d.text((grp_x + 1,              info_y + 87),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
+    d.text((grp_x,              info_y + 86),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
+    d.text((grp_x + num_w + 9,  info_y + 86 + 13), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
+    d.text((grp_x + num_w + 8,  info_y + 86 + 12), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
 
     # Trend arrow at right margin, vertically centered on the gust row
     if trend is not None:
-        _draw_trend(d, device.width - 16, info_y + 84, trend)
+        _draw_trend(d, device.width - 16, info_y + 80, trend)
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     dir_tag  = f"  {wdir}" if wdir else ""
