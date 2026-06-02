@@ -81,7 +81,7 @@ def _load_bold(size):
     return _load_font(size)
 
 font_title  = _load_font(15)
-font_status = _load_bold(108)  # gust number — massive
+font_status = _load_bold(80)   # gust number
 font_data   = _load_font(22)
 font_label  = _load_font(14)
 font_strip  = _load_font(16)   # advisory strip (slightly larger than label)
@@ -390,9 +390,9 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
             y0c = max(y0, y_top);  y1c = min(y1, y_bot)
             if y1c <= y_top or y0c >= y_bot:
                 continue
-            bright = 120 + int(80 * math.sin(
+            bright = 90 + int(50 * math.sin(
                 frame * math.pi / (FRAME_RATE * 1.5) + i * math.pi / 5))
-            rc = (int(bright * 0.35), int(bright * 0.50), int(bright * 0.80))
+            rc = (int(bright * 0.28), int(bright * 0.40), int(bright * 0.65))
             d.line([(x0, y0c), (x1, y1c)], fill=rc, width=2)
             # Splash V-mark when drop reaches the bottom of the info section
             if y1 >= y_bot - 5:
@@ -432,7 +432,7 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
                     continue
                 sx = int((bxs[j] - frame * spd[j]) % device.width)
                 ex = sx + lns[j]
-                bright = 65 + int(55 * math.sin(
+                bright = 35 + int(30 * math.sin(
                     frame * math.pi / (FRAME_RATE * 0.8) + j * math.pi / 4))
                 sc = (bright, bright, bright)
                 if ex <= device.width:
@@ -568,9 +568,6 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(36, 36, 36), width=14)
     d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(24, 24, 24), width=6)
 
-    # Subtle radial speed lines — speedometer texture behind the arc bands
-    _draw_speed_lines(d, cx, cy, r)
-
     # GOOD-state inner sunburst — dim rotating rays in the clear interior of the gauge face
     if not stale and actual_gust < GOOD_MPH:
         ray_rot = (frame * 1.5) % 360
@@ -582,22 +579,6 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
                 (int(cx + 20 * ca_r), int(cy + 20 * sa_r)),
                 (int(cx + 48 * ca_r), int(cy + 48 * sa_r))
             ], fill=(0, b, b // 3), width=1)
-
-    # Expanding concentric ripples from the hub — tinted by current wind zone
-    for i in range(3):
-        rr = int((frame * 1.5 + i * 20) % 52)
-        if 2 <= rr <= 50:
-            rb = max(0, int(20 * (1 - rr / 52)))
-            if rb:
-                if stale:
-                    rp_c = (rb, rb, rb)
-                elif actual_gust < GOOD_MPH:
-                    rp_c = (0, rb, rb // 2)
-                elif actual_gust <= CAUTION_MPH:
-                    rp_c = (rb, int(rb * 0.65), 0)
-                else:
-                    rp_c = (rb, 0, 0)
-                d.ellipse((cx - rr, cy - rr, cx + rr, cy + rr), outline=rp_c, width=1)
 
     dim = 0.30 if stale else 1.0
 
@@ -897,7 +878,7 @@ def render_display(state, frame, needle_gust):
         bx1 = cx + tw // 2 + 10
         by0, by1 = info_y + 1, info_y + 46
         gp = 0.35 + 0.65 * abs(math.sin(frame * math.pi / (FRAME_RATE * 1.5)))
-        for gw, gfac in ((4, 0.10), (3, 0.16), (2, 0.26), (1, 0.44)):
+        for gw, gfac in ((3, 0.14), (1, 0.38)):
             gc = tuple(min(255, int(c * gp * gfac)) for c in accent)
             d.rounded_rectangle([bx0 - gw, by0 - gw, bx1 + gw, by1 + gw],
                                 radius=6 + gw, outline=gc, width=1)
@@ -913,22 +894,22 @@ def render_display(state, frame, needle_gust):
     elif needle_gust >= CAUTION_MPH:
         gp = 0.55 + 0.45 * math.sin(frame * math.pi / (FRAME_RATE * 1.0))
         gust_fill = tuple(min(255, int(c * gp)) for c in accent)
-        mph_fill  = (140, 140, 140)
+        mph_fill  = tuple(max(0, int(c * 0.50)) for c in accent)
     else:
-        gust_fill = (220, 220, 220)
-        mph_fill  = (140, 140, 140)
+        gust_fill = (230, 230, 230)
+        mph_fill  = (190, 190, 190)
     num_str = f"{needle_gust:.0f}"
     num_w   = int(d.textlength(num_str, font=font_status))
     unit_w  = int(d.textlength("mph",   font=font_unit))
     grp_x   = (device.width - num_w - 8 - unit_w) // 2
-    d.text((grp_x + 2,               info_y + 79),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
-    d.text((grp_x,               info_y + 77),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
-    d.text((grp_x + num_w + 10,  info_y + 77 + 13), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
-    d.text((grp_x + num_w + 8,   info_y + 77 + 11), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
+    d.text((grp_x + 2,               info_y + 85),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
+    d.text((grp_x,               info_y + 83),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
+    d.text((grp_x + num_w + 10,  info_y + 83 + 13), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
+    d.text((grp_x + num_w + 8,   info_y + 83 + 11), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
 
     # Trend arrow at left margin, below badge — left side keeps it clear of "mph"
     if trend is not None:
-        _draw_trend(d, 14, info_y + 55, trend)
+        _draw_trend(d, 18, info_y + 63, trend)
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     dir_tag  = f"  {wdir}" if wdir else ""
