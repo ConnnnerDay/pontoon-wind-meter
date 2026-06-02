@@ -28,6 +28,7 @@ GAUGE_MAX       = 25    # mph, full-scale
 GOOD_MPH        = 12
 CAUTION_MPH     = 18
 STALE_MINUTES   = 90
+_SS             = 2     # supersampling scale — render at 2× then LANCZOS to device
 
 # Gauge arc geometry — horseshoe opening at the bottom (PIL degrees)
 _GAUGE_ARC_START = 135   # lower-left (0 mph)
@@ -80,15 +81,15 @@ def _load_bold(size):
         return ImageFont.truetype(_BOLD_PATH, size)
     return _load_font(size)
 
-font_title  = _load_font(15)
-font_status = _load_bold(80)   # gust number
-font_data   = _load_font(22)
-font_label  = _load_font(14)
-font_strip  = _load_font(16)   # advisory strip (slightly larger than label)
-font_unit   = _load_bold(36)   # mph unit beside gust
-font_big    = _load_bold(64)   # status CAUTION
-font_wide   = _load_bold(48)   # status TOO WINDY (longer text)
-font_huge   = _load_bold(80)   # status GOOD (short word, max size)
+font_title  = _load_font(15  * _SS)
+font_status = _load_bold(80  * _SS)
+font_data   = _load_font(22  * _SS)
+font_label  = _load_font(14  * _SS)
+font_strip  = _load_font(16  * _SS)
+font_unit   = _load_bold(36  * _SS)
+font_big    = _load_bold(64  * _SS)
+font_wide   = _load_bold(48  * _SS)
+font_huge   = _load_bold(80  * _SS)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -96,6 +97,10 @@ try:
 except Exception as e:
     logging.critical("Display init failed: %s", e)
     sys.exit(1)
+
+# Supersampled canvas dimensions — all drawing happens here, then LANCZOS to device
+_W = device.width  * _SS
+_H = device.height * _SS
 
 # Thread-safe state shared between the data thread and the animation loop
 _lock  = threading.Lock()
@@ -127,25 +132,32 @@ _GIF_ICONS: dict = {}   # state → list of RGBA PIL Images
 
 _show_counter = [0]
 
+try:
+    _RESAMPLE_DOWN = Image.Resampling.BILINEAR
+except AttributeError:
+    _RESAMPLE_DOWN = Image.BILINEAR  # Pillow < 9.1
+
+
 def _show(img):
-    """Push img to hardware display; encode PNG for the web dashboard every other call."""
+    """Downscale 2× canvas to device resolution, push to display; encode PNG every 2nd call."""
+    out = img.resize(device.size, _RESAMPLE_DOWN)
     _show_counter[0] += 1
-    if _show_counter[0] % 4 == 0:
+    if _show_counter[0] % 2 == 0:
         buf = io.BytesIO()
-        img.save(buf, format="PNG")
+        out.save(buf, format="PNG")
         with _frame_lock:
             _frame_store[0] = buf.getvalue()
-    device.display(img)
+    device.display(out)
 
 
 def make_image():
-    img = Image.new("RGB", device.size, "black")
+    img = Image.new("RGB", (_W, _H), "black")
     return img, ImageDraw.Draw(img)
 
 
 def draw_centered(d, y, text, fill, font):
     w = d.textlength(text, font=font)
-    d.text((int((device.width - w) / 2), y), text, fill=fill, font=font)
+    d.text((int((_W - w) / 2), y), text, fill=fill, font=font)
 
 
 def _fit_text(d, text, font, max_w):
@@ -162,16 +174,16 @@ def _draw_status_badge(d, y, msg, frame, font=None, bh=None):
     if font is None:
         font = font_status
     if bh is None:
-        bh = 30
+        bh = 30 * _SS
     accent_base, bg = _STATUS_CONFIG[msg]
     amp = 50 if msg == "TOO WINDY" else 20
     pulse = int(amp * math.sin(frame * math.pi / (FRAME_RATE * 1.2)))
     accent = tuple(min(255, max(0, c + pulse)) for c in accent_base)
     text_w = d.textlength(msg, font=font)
-    bw = max(int(text_w) + 24, 120)
-    bx = int((device.width - bw) / 2)
-    d.rounded_rectangle([bx, y, bx + bw, y + bh], radius=6, fill=bg, outline=accent, width=2)
-    d.text((device.width // 2, y + bh // 2), msg, fill="white", font=font, anchor="mm")
+    bw = max(int(text_w) + 24 * _SS, 120 * _SS)
+    bx = int((_W - bw) / 2)
+    d.rounded_rectangle([bx, y, bx + bw, y + bh], radius=6 * _SS, fill=bg, outline=accent, width=2 * _SS)
+    d.text((_W // 2, y + bh // 2), msg, fill="white", font=font, anchor="mm")
 
 
 def _trend(history):
@@ -186,25 +198,16 @@ def _trend(history):
 
 def _draw_trend(d, cx, y, trend):
     """24 px tall directional indicator: up = rising, down = easing, dash = steady."""
+    h = 24 * _SS
+    w = 10 * _SS
     if trend == "up":
-        d.polygon([(cx, y), (cx - 10, y + 24), (cx + 10, y + 24)], fill=(240, 130, 0))
+        d.polygon([(cx, y), (cx - w, y + h), (cx + w, y + h)], fill=(240, 130, 0))
     elif trend == "down":
-        d.polygon([(cx, y + 24), (cx - 10, y), (cx + 10, y)], fill=(0, 145, 200))
+        d.polygon([(cx, y + h), (cx - w, y), (cx + w, y)], fill=(0, 145, 200))
     else:
-        d.line([(cx - 11, y + 12), (cx + 11, y + 12)], fill=(85, 85, 85), width=4)
+        d.line([(cx - 11 * _SS, y + h // 2), (cx + 11 * _SS, y + h // 2)],
+               fill=(85, 85, 85), width=4 * _SS)
 
-
-def _draw_speed_lines(d, cx, cy, r):
-    """Very faint radial lines spanning the gauge face — speedometer texture."""
-    inner  = 18
-    outer  = r - 26
-    n      = 24
-    for i in range(n + 1):
-        ang = math.pi * i / n
-        ca, sa = math.cos(ang), math.sin(ang)
-        d.line([(int(cx + inner * ca), int(cy - inner * sa)),
-                (int(cx + outer * ca), int(cy - outer * sa))],
-               fill=(14, 14, 14), width=1)
 
 
 def _draw_compass(d, cx, cy, r, wdir_str):
@@ -212,9 +215,9 @@ def _draw_compass(d, cx, cy, r, wdir_str):
     _dir_deg = {"N": 0, "NE": 45, "E": 90, "SE": 135,
                 "S": 180, "SW": 225, "W": 270, "NW": 315}
 
-    d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(70, 70, 70), width=1)
+    d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(70, 70, 70), width=_SS)
     # North tick — tiny mark at the top of the circle
-    d.line([(cx, cy - r + 1), (cx, cy - r + 4)], fill=(100, 100, 100), width=1)
+    d.line([(cx, cy - r + _SS), (cx, cy - r + 4 * _SS)], fill=(100, 100, 100), width=_SS)
     # Cardinal marks at E, S, W (single dim pixel each)
     for card_deg in (90, 180, 270):
         cr = math.radians(card_deg)
@@ -230,32 +233,32 @@ def _draw_compass(d, cx, cy, r, wdir_str):
     sin_r, cos_r = math.sin(rad), math.cos(rad)
 
     # Arrow tip points where wind comes FROM (meteorological convention)
-    tip_x = cx + (r - 2) * sin_r
-    tip_y = cy - (r - 2) * cos_r
+    tip_x = cx + (r - 2 * _SS) * sin_r
+    tip_y = cy - (r - 2 * _SS) * cos_r
     # Arrowhead base sits 40 % of the way from center toward tip
     base_x = cx + (r * 0.38) * sin_r
     base_y = cy - (r * 0.38) * cos_r
     # Perpendicular half-width for the triangular head
-    hw   = 3.0
+    hw   = 3.0 * _SS
     pr   = rad + math.pi / 2
     l_x  = base_x + hw * math.sin(pr);  l_y  = base_y - hw * math.cos(pr)
     rr_x = base_x - hw * math.sin(pr);  rr_y = base_y + hw * math.cos(pr)
     # Stem tail extends to the opposite side (shorter)
-    tail_x = cx - (r - 5) * sin_r
-    tail_y = cy + (r - 5) * cos_r
+    tail_x = cx - (r - 5 * _SS) * sin_r
+    tail_y = cy + (r - 5 * _SS) * cos_r
 
     d.polygon([(int(tip_x), int(tip_y)), (int(l_x), int(l_y)),
                (int(rr_x), int(rr_y))], fill=(225, 225, 225))
     d.line([(int(base_x), int(base_y)), (int(tail_x), int(tail_y))],
-           fill=(130, 130, 130), width=1)
+           fill=(130, 130, 130), width=_SS)
     # Abbreviation in the lower half of the circle
-    d.text((cx, cy + 3), wdir_str, fill=(130, 130, 130), font=font_label, anchor="mt")
+    d.text((cx, cy + 3 * _SS), wdir_str, fill=(130, 130, 130), font=font_label, anchor="mt")
 
 
 def _draw_wind_streaks(d, cx, cy, r, gust, frame):
     """Animated short dashes flowing along the inner gauge face, speed ∝ wind."""
     speed  = max(2, round(20 - gust * 0.4))
-    inner  = r - 24
+    inner  = r - 24 * _SS
     n      = 7
     for i in range(n):
         phase = ((frame // speed + i * (100 // n)) % 100) / 100.0
@@ -264,64 +267,65 @@ def _draw_wind_streaks(d, cx, cy, r, gust, frame):
         bright = int(60 + 160 * math.sin(phase * math.pi))   # brighter: 60–220
         perp = ang + math.pi / 2
         cp, sp = math.cos(perp), math.sin(perp)
-        hw = 5
+        hw = 5 * _SS
         x0 = cx + inner * ca
         y0 = cy - inner * sa
         x1 = int(x0 + hw * cp);  y1 = int(y0 - hw * sp)
         x2 = int(x0 - hw * cp);  y2 = int(y0 + hw * sp)
-        d.line([(x1, y1), (x2, y2)], fill=(bright, bright, bright), width=2)
+        d.line([(x1, y1), (x2, y2)], fill=(bright, bright, bright), width=2 * _SS)
 
 
 def _draw_weather_icon(d, x, y, status, frame, r=18):
     """Animated weather icon: breathing sun (GOOD), cloud+rain (CAUTION), double bolt (TOO WINDY)."""
     if status == "GOOD":
         breathe = 1 + 0.15 * math.sin(frame * math.pi / FRAME_RATE)
-        disc_r  = max(2, int((r - 5) * breathe))
+        disc_r  = max(2 * _SS, int((r - 5 * _SS) * breathe))
         rot     = (frame * 3) % 360
         for i in range(8):
             ang    = math.radians(rot + i * 45)
             ca, sa = math.cos(ang), math.sin(ang)
-            ray_r  = r if i % 2 == 0 else r - 4
+            ray_r  = r if i % 2 == 0 else r - 4 * _SS
             bright = int(200 + 55 * math.sin(frame * math.pi / FRAME_RATE + i * math.pi / 4))
             bright = max(140, min(255, bright))
-            x1 = int(x + (disc_r + 2) * ca);  y1 = int(y + (disc_r + 2) * sa)
-            x2 = int(x + ray_r * ca);           y2 = int(y + ray_r * sa)
-            d.line([(x1, y1), (x2, y2)], fill=(bright, int(bright * 0.78), 0), width=2)
+            x1 = int(x + (disc_r + 2 * _SS) * ca);  y1 = int(y + (disc_r + 2 * _SS) * sa)
+            x2 = int(x + ray_r * ca);                 y2 = int(y + ray_r * sa)
+            d.line([(x1, y1), (x2, y2)], fill=(bright, int(bright * 0.78), 0), width=2 * _SS)
         d.ellipse((x - disc_r, y - disc_r, x + disc_r, y + disc_r), fill=(255, 200, 20))
 
     elif status == "CAUTION":
         pulse = 0.75 + 0.25 * math.sin(frame * math.pi / (FRAME_RATE * 1.5))
         cc    = tuple(int(c * pulse) for c in (155, 170, 185))
-        for bx, by, br in [(-5, 2, 5), (5, 2, 5), (0, -3, 7)]:
+        for bx, by, br in [(-5*_SS, 2*_SS, 5*_SS), (5*_SS, 2*_SS, 5*_SS), (0, -3*_SS, 7*_SS)]:
             d.ellipse((x+bx-br, y+by-br, x+bx+br, y+by+br), fill=cc)
-        cloud_base = y + 7
+        cloud_base = y + 7 * _SS
         for i in range(4):
-            dx     = x - 6 + i * 4
-            drop_y = cloud_base + (frame * 2 + i * 3) % 12
-            if drop_y <= y + r - 2:
+            dx     = x - 6 * _SS + i * 4 * _SS
+            drop_y = cloud_base + (frame * 2 + i * 3) % (12 * _SS)
+            if drop_y <= y + r - 2 * _SS:
                 alpha = int(180 + 60 * math.sin(frame * math.pi / FRAME_RATE + i * math.pi / 2))
-                d.line([(dx, drop_y), (dx, drop_y + 3)],
-                       fill=(70, 130, min(255, alpha)), width=2)
+                d.line([(dx, drop_y), (dx, drop_y + 3 * _SS)],
+                       fill=(70, 130, min(255, alpha)), width=2 * _SS)
 
     else:   # TOO WINDY — double lightning bolt with speed lines
         pulse = 0.5 + 0.5 * math.sin(frame * math.pi / (FRAME_RATE * 0.5))
         lc    = (min(255, int(230 * pulse + 40)), min(255, int(100 * pulse)), 0)
         dim   = tuple(max(0, int(c * 0.6)) for c in lc)
-        d.polygon([(x-1, y-r+2), (x+2,  y-1), (x-3, y-1)], fill=dim)
-        d.polygon([(x-5, y+r-2), (x-2,  y+1), (x-6, y+1)], fill=dim)
-        d.polygon([(x+4, y-r+2), (x+7,  y-1), (x+1, y-1)], fill=lc)
-        d.polygon([(x,   y+r-2), (x+3,  y+1), (x-3, y+1)], fill=lc)
+        s = _SS
+        d.polygon([(x-s, y-r+2*s), (x+2*s, y-s), (x-3*s, y-s)], fill=dim)
+        d.polygon([(x-5*s, y+r-2*s), (x-2*s, y+s), (x-6*s, y+s)], fill=dim)
+        d.polygon([(x+4*s, y-r+2*s), (x+7*s, y-s), (x+s, y-s)], fill=lc)
+        d.polygon([(x, y+r-2*s), (x+3*s, y+s), (x-3*s, y+s)], fill=lc)
         for j, (y_off, x_len) in enumerate([(-6, 12), (0, 16), (6, 10)]):
             lc_j = tuple(int(c * pulse * (1 - j * 0.15)) for c in (180, 180, 180))
-            d.line([(x - r, y + y_off), (x - r + x_len, y + y_off)], fill=lc_j, width=2)
+            d.line([(x - r, y + y_off * s), (x - r + x_len * s, y + y_off * s)], fill=lc_j, width=2 * _SS)
 
 
 def _load_gif_icons():
     """Load and resize weather GIF frames once at startup."""
     try:
-        _resample = Image.Resampling.NEAREST
+        _resample = Image.Resampling.LANCZOS
     except AttributeError:
-        _resample = Image.NEAREST  # Pillow < 9.1
+        _resample = Image.LANCZOS  # Pillow < 9.1
     assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
     files = {"GOOD": "clear-day.gif", "CAUTION": "rain.gif", "TOO WINDY": "wind.gif"}
     for state, fname in files.items():
@@ -336,9 +340,9 @@ def _load_gif_icons():
                 try:
                     gif.seek(i)
                     f = gif.convert("RGBA").resize(
-                        (_GIF_ICON_SIZE, _GIF_ICON_SIZE), _resample)
-                    # Key out near-black pixels (LED matrix "off" state)
-                    px = [(r, g, b, 0) if r + g + b < 20 else (r, g, b, a)
+                        (_GIF_ICON_SIZE * _SS, _GIF_ICON_SIZE * _SS), _resample)
+                    # Key out black background; threshold 30 handles LANCZOS anti-aliased edges
+                    px = [(r, g, b, 0) if r + g + b < 30 else (r, g, b, a)
                           for r, g, b, a in f.getdata()]
                     f.putdata(px)
                     frames.append(f)
@@ -356,7 +360,7 @@ def _load_gif_icons():
 def _draw_info_bg(d, y_top, y_bot, status, frame):
     """Animated background texture drawn behind the info-section text."""
     if status == "GOOD":
-        scroll = (frame * 2) % 80
+        scroll = (frame * 2) % (80 * _SS)
         for i, (wy_off, wc, wl_i, amp_i) in enumerate([
             (10,  (0,  99, 64), 70, 3),
             (30,  (0,  86, 56), 90, 5),
@@ -365,21 +369,18 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
             (96,  (0,  48, 32), 80, 4),
             (118, (0,  35, 24), 95, 5),
         ]):
-            wy = y_top + wy_off
+            wy = y_top + wy_off * _SS
             if wy >= y_bot:
                 continue
-            ph   = i * 17
-            prev = None
-            for px in range(device.width + 1):
-                sy = wy + int(amp_i * math.sin(2 * math.pi * (px + scroll + ph) / wl_i))
-                if prev:
-                    d.line([prev, (px, sy)], fill=wc, width=1)
-                prev = (px, sy)
+            ph   = i * 17 * _SS
+            pts  = [(px, wy + int(amp_i * _SS * math.sin(2 * math.pi * (px + scroll + ph) / (wl_i * _SS))))
+                    for px in range(_W + 1)]
+            d.line(pts, fill=wc, width=_SS)
 
         # Floating upward particles — slow drift gives GOOD state a lively feel
         span = y_bot - y_top
         for i in range(14):
-            px_pos  = (i * 17 + 11) % device.width
+            px_pos  = (i * 17 * _SS + 11 * _SS) % _W
             speed   = 1 + (i % 3)
             py_off  = span - (frame * speed + i * (span // 14)) % span
             py_pos  = y_top + int(py_off)
@@ -393,98 +394,95 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
     elif status == "CAUTION":
         info_h = y_bot - y_top
         for i in range(20):
-            bx  = (i * 12) % device.width
-            t   = (frame * 2 + i * 7) % (info_h + 14)
-            x0, y0 = bx,     y_top + t - 14
-            x1, y1 = bx + 8, y0 + 10
+            bx  = (i * 12 * _SS) % _W
+            t   = (frame * 2 + i * 7) % (info_h + 14 * _SS)
+            x0, y0 = bx,              y_top + t - 14 * _SS
+            x1, y1 = bx + 8 * _SS,   y0 + 10 * _SS
             y0c = max(y0, y_top);  y1c = min(y1, y_bot)
             if y1c <= y_top or y0c >= y_bot:
                 continue
             bright = 90 + int(50 * math.sin(
                 frame * math.pi / (FRAME_RATE * 1.5) + i * math.pi / 5))
             rc = (int(bright * 0.28), int(bright * 0.40), int(bright * 0.65))
-            d.line([(x0, y0c), (x1, y1c)], fill=rc, width=2)
+            d.line([(x0, y0c), (x1, y1c)], fill=rc, width=2 * _SS)
             # Splash V-mark when drop reaches the bottom of the info section
-            if y1 >= y_bot - 5:
-                sp = min(1.0, (y1 - (y_bot - 5)) / 5)
-                sw = max(1, int(4 * sp))
-                sy_s = min(y_bot - 1, y0 + 10)
+            if y1 >= y_bot - 5 * _SS:
+                sp = min(1.0, (y1 - (y_bot - 5 * _SS)) / (5 * _SS))
+                sw = max(1, int(4 * _SS * sp))
+                sy_s = min(y_bot - 1, y0 + 10 * _SS)
                 sc_s = (int(rc[0] * 0.5), int(rc[1] * 0.5), int(rc[2] * 0.5))
-                d.line([(x0 - sw, sy_s), (x0, sy_s - 2)], fill=sc_s, width=1)
-                d.line([(x0, sy_s - 2), (x0 + sw, sy_s)], fill=sc_s, width=1)
+                d.line([(x0 - sw, sy_s), (x0, sy_s - 2 * _SS)], fill=sc_s, width=_SS)
+                d.line([(x0, sy_s - 2 * _SS), (x0 + sw, sy_s)], fill=sc_s, width=_SS)
 
         # Occasional lightning bolt — 2-frame flash every ~9 s
         if (frame % (FRAME_RATE * 9)) < 2:
             bolt_f = frame % (FRAME_RATE * 9)
             lb  = int(160 * (1 - bolt_f / 2))
             lc  = (int(lb * 0.55), int(lb * 0.70), lb)
-            lbx = device.width // 3
-            d.line([(lbx,      y_top +  8), (lbx - 10, y_top + 42)], fill=lc, width=2)
-            d.line([(lbx - 10, y_top + 42), (lbx +  8, y_top + 80)], fill=lc, width=2)
+            lbx = _W // 3
+            d.line([(lbx,               y_top +  8 * _SS), (lbx - 10 * _SS, y_top + 42 * _SS)], fill=lc, width=2 * _SS)
+            d.line([(lbx - 10 * _SS,    y_top + 42 * _SS), (lbx +  8 * _SS, y_top + 80 * _SS)], fill=lc, width=2 * _SS)
 
     else:   # TOO WINDY — horizontal wind streaks + periodic red alarm flash
         # Brief alarm flash every ~10 s — red wash fades in/out over 4 frames
         flash = (frame * 2) % 100
         if flash < 4:
             flash_r = int(65 * (1 - flash / 4))
-            d.rectangle([0, y_top, device.width - 1, y_bot], fill=(flash_r, 0, 0))
+            d.rectangle([0, y_top, _W - 1, y_bot], fill=(flash_r, 0, 0))
 
         bxs = [8,  52,  96, 140, 184, 228,  30,  74]
         lns = [22, 28,  20,  26,  24,  18,  32,  16]
         spd = [5,   7,   4,   6,   5,   8,   6,   3]
         for row_off in (14, 50, 86, 112):
-            ry = y_top + row_off
+            ry = y_top + row_off * _SS
             if ry >= y_bot:
                 continue
             for j in range(8):
-                sy = ry + (j % 3 - 1) * 6
+                sy = ry + (j % 3 - 1) * 6 * _SS
                 if sy < y_top or sy >= y_bot:
                     continue
-                sx = int((bxs[j] - frame * spd[j]) % device.width)
-                ex = sx + lns[j]
+                sx = int((bxs[j] * _SS - frame * spd[j]) % _W)
+                ex = sx + lns[j] * _SS
                 bright = 35 + int(30 * math.sin(
                     frame * math.pi / (FRAME_RATE * 0.8) + j * math.pi / 4))
                 sc = (bright, bright, bright)
-                if ex <= device.width:
-                    d.line([(sx, sy), (ex, sy)], fill=sc, width=2)
+                if ex <= _W:
+                    d.line([(sx, sy), (ex, sy)], fill=sc, width=2 * _SS)
                 else:
-                    d.line([(sx, sy), (device.width - 1, sy)], fill=sc, width=2)
-                    d.line([(0,  sy), (ex % device.width, sy)], fill=sc, width=2)
+                    d.line([(sx, sy), (_W - 1, sy)], fill=sc, width=2 * _SS)
+                    d.line([(0,  sy), (ex % _W, sy)], fill=sc, width=2 * _SS)
 
 
 def _draw_marine_wave(d, frame, color, y_mid):
     """Scrolling sine wave shown in the bottom strip when no alerts are active."""
-    amplitude  = 3
-    wavelength = 55
+    amplitude  = 3  * _SS
+    wavelength = 55 * _SS
     offset     = (frame * 2) % wavelength
-    prev = None
-    for x in range(device.width + 1):
-        y = y_mid + int(amplitude * math.sin(2 * math.pi * (x + offset) / wavelength))
-        if prev is not None:
-            d.line([prev, (x, y)], fill=color, width=1)
-        prev = (x, y)
+    pts = [(x, y_mid + int(amplitude * math.sin(2 * math.pi * (x + offset) / wavelength)))
+           for x in range(_W + 1)]
+    d.line(pts, fill=color, width=_SS)
 
 
 
 def _draw_edge_accents(d, accent, frame):
     """Thin pulsing accent strips on the left and right screen edges."""
     pulse = 0.2 + 0.8 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.5)))
-    for x in range(3):
-        fade = (3 - x) / 3.0
+    for x in range(3 * _SS):
+        fade = (3 * _SS - x) / (3.0 * _SS)
         col  = tuple(int(c * pulse * fade * 0.28) for c in accent)
-        d.line([(x, 18), (x, device.height - 1)], fill=col)
-        d.line([(device.width - 1 - x, 18), (device.width - 1 - x, device.height - 1)], fill=col)
+        d.line([(x, 18 * _SS), (x, _H - 1)], fill=col)
+        d.line([(_W - 1 - x, 18 * _SS), (_W - 1 - x, _H - 1)], fill=col)
 
 
 def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_str=None, age_minutes=None):
     """Top strip: cycles NOAA alerts; when quiet, rotates wind / marine / clock."""
-    strip_h = 18
+    strip_h = 18 * _SS
     y_mid = y0 + strip_h // 2
-    cx    = device.width // 2
-    d.rectangle([0, y0, device.width - 1, y0 + strip_h], fill=(18, 18, 18))
+    cx    = _W // 2
+    d.rectangle([0, y0, _W - 1, y0 + strip_h], fill=(18, 18, 18))
     sep_b = int(38 + 42 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.0))))
     sep_c = tuple(min(255, int(c * sep_b / 255)) for c in status_color)
-    d.line([0, y0 + strip_h, device.width, y0 + strip_h], fill=sep_c)
+    d.line([0, y0 + strip_h, _W, y0 + strip_h], fill=sep_c, width=_SS)
 
     if not alerts:
         wave_color = tuple(max(0, c // 4) for c in status_color)
@@ -496,33 +494,35 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
         slots.append(("clock", None))
         idx  = (frame // (FRAME_RATE * 5)) % len(slots)
         kind, text = slots[idx]
+        r3, r9 = 3 * _SS, 9 * _SS
         if kind == "wind":
-            d.ellipse((3, y_mid - 3, 9, y_mid + 3), fill=(55, 115, 55))
+            d.ellipse((r3, y_mid - r3, r9, y_mid + r3), fill=(55, 115, 55))
             d.text((cx, y_mid), text, fill=(175, 195, 175), font=font_strip, anchor="mm")
         elif kind == "marine":
-            d.ellipse((3, y_mid - 3, 9, y_mid + 3), fill=(35, 70, 115))
+            d.ellipse((r3, y_mid - r3, r9, y_mid + r3), fill=(35, 70, 115))
             d.text((cx, y_mid), text, fill=(110, 140, 160), font=font_strip, anchor="mm")
         else:
             _draw_marine_wave(d, frame, wave_color, y_mid)
-            # Tiny clock icon at the left — matches the wind/marine dot position
-            d.ellipse((3, y_mid - 3, 9, y_mid + 3), outline=(72, 72, 72), width=1)
-            d.line([(6, y_mid), (6, y_mid - 2)], fill=(72, 72, 72), width=1)
-            d.line([(6, y_mid), (8, y_mid)],     fill=(72, 72, 72), width=1)
+            d.ellipse((r3, y_mid - r3, r9, y_mid + r3), outline=(72, 72, 72), width=_SS)
+            clk = 6 * _SS
+            d.line([(clk, y_mid), (clk, y_mid - 2 * _SS)], fill=(72, 72, 72), width=_SS)
+            d.line([(clk, y_mid), (clk + 2 * _SS, y_mid)], fill=(72, 72, 72), width=_SS)
             time_str = time.strftime("%H:%M")
             if age_minutes is not None:
                 age_str = f"{int(age_minutes)}m"
-                d.text((cx - 4, y_mid), time_str, fill=(110, 110, 110), font=font_strip, anchor="rm")
-                d.text((cx + 4, y_mid), age_str,  fill=(72, 72, 72),   font=font_strip, anchor="lm")
+                d.text((cx - 4 * _SS, y_mid), time_str, fill=(110, 110, 110), font=font_strip, anchor="rm")
+                d.text((cx + 4 * _SS, y_mid), age_str,  fill=(72, 72, 72),   font=font_strip, anchor="lm")
             else:
                 d.text((cx, y_mid), time_str, fill=(110, 110, 110), font=font_strip, anchor="mm")
 
         # Horizontal slot progress dots at right edge
         n_slots = len(slots)
         for si in range(n_slots):
-            dx = device.width - 4 - (n_slots - 1 - si) * 5
+            dx = _W - 4 * _SS - (n_slots - 1 - si) * 5 * _SS
             dc = (tuple(min(255, int(c * 0.65)) for c in status_color) if si == idx
                   else (36, 36, 36))
-            d.ellipse((dx - 2, y_mid - 2, dx + 2, y_mid + 2), fill=dc)
+            pr = 2 * _SS
+            d.ellipse((dx - pr, y_mid - pr, dx + pr, y_mid + pr), fill=dc)
         return
 
     idx = (frame // (FRAME_RATE * 4)) % len(alerts)   # new alert every 4 s
@@ -532,17 +532,17 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
     # Pulsing warning dot
     pulse = 0.55 + 0.45 * math.sin(frame * math.pi / (FRAME_RATE * 0.7))
     dot_color = tuple(min(255, int(c * pulse)) for c in color)
-    d.ellipse([7, y_mid - 5, 15, y_mid + 5], fill=dot_color)
+    d.ellipse([7 * _SS, y_mid - 5 * _SS, 15 * _SS, y_mid + 5 * _SS], fill=dot_color)
 
     # Alert name, truncated to available width
-    text = _fit_text(d, name, font_strip, device.width - 26)
-    d.text((21, y_mid), text, fill=color, font=font_strip, anchor="lm")
+    text = _fit_text(d, name, font_strip, _W - 26 * _SS)
+    d.text((21 * _SS, y_mid), text, fill=color, font=font_strip, anchor="lm")
 
     # Page indicator when there are multiple alerts
     if len(alerts) > 1:
         count_str = f"{idx + 1}/{len(alerts)}"
         cw = int(d.textlength(count_str, font=font_strip))
-        d.text((device.width - cw - 4, y_mid), count_str,
+        d.text((_W - cw - 4 * _SS, y_mid), count_str,
                fill=(65, 65, 65), font=font_strip, anchor="lm")
 
 
@@ -562,7 +562,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     arc_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
 
     # Outer border ring — pulses in the zone's accent color when live
-    ob  = r + 10
+    ob  = r + 10 * _SS
     if stale:
         ob_col = (42, 42, 42)
     else:
@@ -571,12 +571,12 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         ob_p   = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.5)))
         ob_col = tuple(max(16, int(c * ob_p * 0.20)) for c in zone_c)
     d.arc((cx - ob, cy - ob, cx + ob, cy + ob),
-          _GAUGE_ARC_START - 4, arc_end + 4, fill=ob_col, width=2)
+          _GAUGE_ARC_START - 4, arc_end + 4, fill=ob_col, width=2 * _SS)
 
     # Dark backing arc — layered to create a subtle cross-section depth
-    d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(20, 20, 20), width=22)
-    d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(36, 36, 36), width=14)
-    d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(24, 24, 24), width=6)
+    d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(20, 20, 20), width=22 * _SS)
+    d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(36, 36, 36), width=14 * _SS)
+    d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(24, 24, 24), width= 6 * _SS)
 
     # GOOD-state inner sunburst — dim rotating rays in the clear interior of the gauge face
     if not stale and actual_gust < GOOD_MPH:
@@ -586,29 +586,29 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
             ca_r, sa_r = math.cos(ang_r), math.sin(ang_r)
             b = int(9 + 5 * math.sin(frame * math.pi / (FRAME_RATE * 2.5) + i * math.pi / 6))
             d.line([
-                (int(cx + 20 * ca_r), int(cy + 20 * sa_r)),
-                (int(cx + 48 * ca_r), int(cy + 48 * sa_r))
-            ], fill=(0, b, b // 3), width=1)
+                (int(cx + 20 * _SS * ca_r), int(cy + 20 * _SS * sa_r)),
+                (int(cx + 48 * _SS * ca_r), int(cy + 48 * _SS * sa_r))
+            ], fill=(0, b, b // 3), width=_SS)
 
     dim = 0.30 if stale else 1.0
 
     # Soft ambient glow behind zone arcs — wider dim pre-pass for depth
     glow_dim = dim * 0.22
-    d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,    fill=_dim(_GREEN,  glow_dim), width=26)
-    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END,  fill=_dim(_YELLOW, glow_dim), width=26)
-    d.arc(box, CAUTION_ARC_END, arc_end,           fill=_dim(_RED,    glow_dim), width=26)
+    d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,    fill=_dim(_GREEN,  glow_dim), width=26 * _SS)
+    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END,  fill=_dim(_YELLOW, glow_dim), width=26 * _SS)
+    d.arc(box, CAUTION_ARC_END, arc_end,           fill=_dim(_RED,    glow_dim), width=26 * _SS)
 
     # Colored zone arcs
-    d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,    fill=_dim(_GREEN,  dim), width=16)
-    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END,  fill=_dim(_YELLOW, dim), width=16)
-    d.arc(box, CAUTION_ARC_END, arc_end,          fill=_dim(_RED,    dim), width=16)
+    d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,    fill=_dim(_GREEN,  dim), width=16 * _SS)
+    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END,  fill=_dim(_YELLOW, dim), width=16 * _SS)
+    d.arc(box, CAUTION_ARC_END, arc_end,          fill=_dim(_RED,    dim), width=16 * _SS)
 
     # Thin specular highlight at the inner edge of each arc band — adds depth
-    ih   = r - 8
+    ih   = r - 8 * _SS
     ibox = (cx - ih, cy - ih, cx + ih, cy + ih)
-    d.arc(ibox, _GAUGE_ARC_START, GOOD_ARC_END,   fill=_dim(_GREEN,  dim * 0.55), width=2)
-    d.arc(ibox, GOOD_ARC_END,    CAUTION_ARC_END, fill=_dim(_YELLOW, dim * 0.55), width=2)
-    d.arc(ibox, CAUTION_ARC_END, arc_end,         fill=_dim(_RED,    dim * 0.55), width=2)
+    d.arc(ibox, _GAUGE_ARC_START, GOOD_ARC_END,   fill=_dim(_GREEN,  dim * 0.55), width=2 * _SS)
+    d.arc(ibox, GOOD_ARC_END,    CAUTION_ARC_END, fill=_dim(_YELLOW, dim * 0.55), width=2 * _SS)
+    d.arc(ibox, CAUTION_ARC_END, arc_end,         fill=_dim(_RED,    dim * 0.55), width=2 * _SS)
 
     # Pulsing overlay on the currently-active zone arc — breathes to indicate live zone
     if not stale:
@@ -619,7 +619,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
             za_s, za_e, zc = GOOD_ARC_END, CAUTION_ARC_END, _YELLOW
         else:
             za_s, za_e, zc = CAUTION_ARC_END, arc_end, _RED
-        d.arc(box, za_s, za_e, fill=_dim(zc, zp), width=26)
+        d.arc(box, za_s, za_e, fill=_dim(zc, zp), width=26 * _SS)
 
     # Bright narrow trace from 0 to current needle — highlights the swept arc
     if needle_gust > 0.1 and not stale:
@@ -627,14 +627,14 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         trace_c = ((0, 220, 100) if needle_gust < GOOD_MPH
                    else ((255, 210, 0) if needle_gust <= CAUTION_MPH
                          else (255, 80, 80)))
-        d.arc(box, _GAUGE_ARC_START, na_end, fill=trace_c, width=4)
+        d.arc(box, _GAUGE_ARC_START, na_end, fill=trace_c, width=4 * _SS)
 
     # Animated wind streaks flowing inside the arc face
     _draw_wind_streaks(d, cx, cy, r, actual_gust, frame)
 
     # Tick marks — colored by zone; ticks near the needle glow brighter
-    tick_outer  = r - 8
-    tick_inner  = r - 18
+    tick_outer  = r - 8  * _SS
+    tick_inner  = r - 18 * _SS
     needle_deg  = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
     for mph_val in range(0, GAUGE_MAX + 1, 5):
         ang = _gauge_ang(mph_val)
@@ -655,7 +655,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
             if prox > 0:
                 tick_c = tuple(min(255, int(c + 110 * prox)) for c in tick_c)
         d.line([(int(x1), int(y1)), (int(x2), int(y2))],
-               fill=tick_c, width=2 if is_major else 1)
+               fill=tick_c, width=2 * _SS if is_major else _SS)
 
     # Zone-boundary labels — tinted to match the zone they mark
     for mph_val, lbl, lbl_c in [
@@ -664,11 +664,11 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     ]:
         ang = _gauge_ang(mph_val)
         ca, sa = math.cos(ang), math.sin(ang)
-        lx, ly = cx + (r - 28) * ca, cy + (r - 28) * sa
+        lx, ly = cx + (r - 28 * _SS) * ca, cy + (r - 28 * _SS) * sa
         d.text((int(lx), int(ly)), lbl, fill=lbl_c, font=font_data, anchor="mm")
 
     # Dim "GUST" label in upper-center of gauge interior — context for the needle
-    d.text((cx, cy - 50), "GUST", fill=(48, 48, 48), font=font_label, anchor="mm")
+    d.text((cx, cy - 50 * _SS), "GUST", fill=(48, 48, 48), font=font_label, anchor="mm")
 
     # Peak gust marker — bright tick just outside the arc at session-max position
     if history and len(history) >= 2 and not stale:
@@ -676,40 +676,38 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         if peak > actual_gust + 0.3:
             p_ang  = _gauge_ang(min(peak, GAUGE_MAX))
             p_ca, p_sa = math.cos(p_ang), math.sin(p_ang)
-            po = (cx + (r + 4) * p_ca, cy + (r + 4) * p_sa)
-            pi = (cx + (r - 4) * p_ca, cy + (r - 4) * p_sa)
+            po = (cx + (r + 4 * _SS) * p_ca, cy + (r + 4 * _SS) * p_sa)
+            pi = (cx + (r - 4 * _SS) * p_ca, cy + (r - 4 * _SS) * p_sa)
             d.line([(int(po[0]), int(po[1])), (int(pi[0]), int(pi[1]))],
-                   fill=(220, 200, 55), width=2)
-            # Value label just outside the arc edge at the peak position
-            lx = int(cx + (r + 15) * p_ca)
-            ly = int(cy + (r + 15) * p_sa)
+                   fill=(220, 200, 55), width=2 * _SS)
+            lx = int(cx + (r + 15 * _SS) * p_ca)
+            ly = int(cy + (r + 15 * _SS) * p_sa)
             d.text((lx, ly), f"{peak:.0f}", fill=(140, 120, 28), font=font_label, anchor="mm")
 
     if stale:
-        # Radar-style scanning sweep suggests the gauge is waiting for fresh data
         sweep_pos = _GAUGE_ARC_START + (frame * 3) % _GAUGE_ARC_SWEEP
         trail_s   = max(_GAUGE_ARC_START, sweep_pos - 28)
-        d.arc(box, trail_s, sweep_pos, fill=(0, 22, 11), width=14)
+        d.arc(box, trail_s, sweep_pos, fill=(0, 22, 11), width=14 * _SS)
         d.text((cx, cy), "STALE", fill=(55, 55, 55), font=font_label, anchor="mm")
 
-    # Sustained avg wind: diamond marker on the arc at r-10, plus tiny readout below hub
+    # Sustained avg wind: diamond marker on the arc, plus tiny readout below hub
     if wind is not None and not stale:
         w_ang  = _gauge_ang(min(wind, GAUGE_MAX))
         w_ca, w_sa = math.cos(w_ang), math.sin(w_ang)
-        wx = int(cx + (r - 10) * w_ca)
-        wy = int(cy + (r - 10) * w_sa)
-        ds = 4
+        wx = int(cx + (r - 10 * _SS) * w_ca)
+        wy = int(cy + (r - 10 * _SS) * w_sa)
+        ds = 4 * _SS
         d.polygon([(wx, wy - ds), (wx + ds, wy), (wx, wy + ds), (wx - ds, wy)],
                   fill=(45, 45, 45), outline=(145, 145, 145))
-        d.text((cx, cy + 26), f"avg {wind:.0f}", fill=(120, 120, 120), font=font_data, anchor="mm")
+        d.text((cx, cy + 26 * _SS), f"avg {wind:.0f}", fill=(155, 155, 155), font=font_data, anchor="mm")
 
     # Tiny gust history sparkline below avg text — oldest left, newest right
     if history and len(history) >= 2 and not stale:
         pts  = list(reversed(history[:6]))
         n    = len(pts)
-        sx0, sx1 = cx - 34, cx + 34
-        syc  = cy + 48
-        h_sp = 6
+        sx0, sx1 = cx - 34 * _SS, cx + 34 * _SS
+        syc  = cy + 48 * _SS
+        h_sp = 6 * _SS
         maxv = max(max(pts) * 1.05, GOOD_MPH + 1)
         for j in range(n - 1):
             px0 = sx0 + j * (sx1 - sx0) // (n - 1)
@@ -717,18 +715,18 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
             py0 = syc - int(pts[j]     / maxv * h_sp)
             py1 = syc - int(pts[j + 1] / maxv * h_sp)
             v   = pts[j]
-            sc  = ((0, 72, 32) if v < GOOD_MPH
-                   else ((108, 84, 0) if v <= CAUTION_MPH else (108, 20, 20)))
-            d.line([(px0, py0), (px1, py1)], fill=sc, width=1)
+            sc  = ((0, 95, 45) if v < GOOD_MPH
+                   else ((130, 100, 0) if v <= CAUTION_MPH else (130, 28, 28)))
+            d.line([(px0, py0), (px1, py1)], fill=sc, width=_SS)
         last_y = syc - int(pts[-1] / maxv * h_sp)
         dot_c  = ((0, 175, 80) if pts[-1] < GOOD_MPH
                   else ((195, 152, 0) if pts[-1] <= CAUTION_MPH else (195, 45, 45)))
-        d.ellipse((sx1 - 2, last_y - 2, sx1 + 2, last_y + 2), fill=dot_c)
+        dr = 2 * _SS
+        d.ellipse((sx1 - dr, last_y - dr, sx1 + dr, last_y + dr), fill=dot_c)
 
     # Kite-shaped needle — soft glow arc at its angle for a back-lit instrument feel
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
     ang = _gauge_ang(pct * GAUGE_MAX)
-    # High-wind tremor: needle vibrates when in the red zone, simulating turbulence
     if not stale and actual_gust > CAUTION_MPH:
         ang += math.radians(1.5 * math.sin(frame * math.pi / (FRAME_RATE * 0.10)))
     if not stale and needle_gust > 0.1:
@@ -736,23 +734,23 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         glow_c   = ((0, 28, 14) if needle_gust < GOOD_MPH
                     else ((32, 24, 0) if needle_gust <= CAUTION_MPH
                           else (32, 6, 6)))
-        d.arc(box, glow_ang - 7, glow_ang + 7, fill=glow_c, width=22)
+        d.arc(box, glow_ang - 7, glow_ang + 7, fill=glow_c, width=22 * _SS)
     ca, sa = math.cos(ang), math.sin(ang)
     perp = ang - math.pi / 2
     cp, sp = math.cos(perp), math.sin(perp)
-    tip   = (cx + r  * ca,  cy + r  * sa)
-    wide  = (cx + 8  * ca,  cy + 8  * sa)
-    tail  = (cx - 14 * ca,  cy - 14 * sa)
-    hw = 5.5
+    tip   = (cx + r         * ca, cy + r         * sa)
+    wide  = (cx + 8  * _SS  * ca, cy + 8  * _SS  * sa)
+    tail  = (cx - 14 * _SS  * ca, cy - 14 * _SS  * sa)
+    hw = 5.5 * _SS
     left  = (wide[0] + hw * cp, wide[1] + hw * sp)
     right = (wide[0] - hw * cp, wide[1] - hw * sp)
     needle_fill = (90, 90, 90) if stale else (240, 240, 240)
-    # Shadow polygon offset (+2,+2) for depth
+    sh = 2 * _SS
     d.polygon(
-        [(int(tip[0])   + 2, int(tip[1])   + 2),
-         (int(left[0])  + 2, int(left[1])  + 2),
-         (int(tail[0])  + 2, int(tail[1])  + 2),
-         (int(right[0]) + 2, int(right[1]) + 2)],
+        [(int(tip[0])   + sh, int(tip[1])   + sh),
+         (int(left[0])  + sh, int(left[1])  + sh),
+         (int(tail[0])  + sh, int(tail[1])  + sh),
+         (int(right[0]) + sh, int(right[1]) + sh)],
         fill=(10, 10, 10),
     )
     d.polygon(
@@ -763,19 +761,20 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         fill=needle_fill,
     )
 
-    # Pulsing colored dot at needle tip — breathes to draw the eye
+    # Pulsing colored dot at needle tip
     if not stale:
         tc = ((0, 200, 90) if needle_gust < GOOD_MPH
               else ((240, 190, 0) if needle_gust <= CAUTION_MPH
                     else (240, 60, 60)))
         tp = 0.65 + 0.35 * math.sin(frame * math.pi / (FRAME_RATE * 0.7))
-        tr = max(2, int(5 * tp))
+        tr = max(2 * _SS, int(5 * _SS * tp))
         d.ellipse((int(tip[0]) - tr, int(tip[1]) - tr,
                    int(tip[0]) + tr, int(tip[1]) + tr), fill=tc)
 
     # Pivot hub — three concentric rings; center dot colored by current zone
-    d.ellipse((cx - 11, cy - 11, cx + 11, cy + 11), fill=(28, 28, 28), outline=(90, 90, 90), width=1)
-    d.ellipse((cx -  8, cy -  8, cx +  8, cy +  8), fill=(18, 18, 18), outline=(55, 55, 55), width=1)
+    h1, h2, h3 = 11 * _SS, 8 * _SS, 5 * _SS
+    d.ellipse((cx - h1, cy - h1, cx + h1, cy + h1), fill=(28, 28, 28), outline=(90, 90, 90), width=_SS)
+    d.ellipse((cx - h2, cy - h2, cx + h2, cy + h2), fill=(18, 18, 18), outline=(55, 55, 55), width=_SS)
     if stale:
         hub_c = (90, 90, 90)
     elif actual_gust > CAUTION_MPH:
@@ -784,7 +783,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         hub_c = (210, 170, 0)
     else:
         hub_c = (0, 180, 80)
-    d.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), fill=hub_c)
+    d.ellipse((cx - h3, cy - h3, cx + h3, cy + h3), fill=hub_c)
 
 
 def render_display(state, frame, needle_gust):
@@ -806,16 +805,16 @@ def render_display(state, frame, needle_gust):
     trend = _trend(history)
 
     img, d = make_image()
-    r  = 80
+    r  = 80 * _SS
     # Advisory strip occupies y=0-18; gauge starts 14px below that
-    cy = 18 + 14 + (r + 11)
-    cx = device.width // 2
+    cy = (18 + 14) * _SS + r + 11 * _SS
+    cx = _W // 2
 
     # Pre-compute info_y so the background draws before gauge text
-    info_y = cy + int(r * 0.707) + 8
+    info_y = cy + int(r * 0.707) + 8 * _SS
 
     # Draw animated info-section background first (behind all text)
-    _draw_info_bg(d, info_y, device.height - 1, msg, frame)
+    _draw_info_bg(d, info_y, _H - 1, msg, frame)
 
     stale = age is not None and age >= STALE_MINUTES
 
@@ -823,39 +822,40 @@ def render_display(state, frame, needle_gust):
     if not stale:
         halo_p   = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3.0)))
         halo_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
-        for h_off, h_fac in ((r + 17, 0.13), (r + 24, 0.07)):
+        for h_off, h_fac in ((r + 17 * _SS, 0.13), (r + 24 * _SS, 0.07)):
             hc = tuple(max(0, int(c * h_fac * halo_p)) for c in accent)
             if any(v > 0 for v in hc):
                 d.arc((cx - h_off, cy - h_off, cx + h_off, cy + h_off),
-                      _GAUGE_ARC_START - 8, halo_end + 8, fill=hc, width=2)
+                      _GAUGE_ARC_START - 8, halo_end + 8, fill=hc, width=2 * _SS)
 
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind, history=history)
 
     # Compass rose inside the arc — upper-left to clear the "18" label at upper-right
-    _draw_compass(d, cx - 40, cy - 24, 20, wdir)
+    _draw_compass(d, cx - 40 * _SS, cy - 24 * _SS, 20 * _SS, wdir)
 
     # Data freshness bar — centered horizontal line in the gauge mouth gap
     if age is not None:
         freshness = max(0.0, 1.0 - age / STALE_MINUTES)
-        bar_hw = int(42 * freshness)
+        bar_hw = int(42 * _SS * freshness)
         if bar_hw > 0:
             bright = max(24, int(65 * freshness))
-            by = info_y - 7
-            d.line([(cx - bar_hw, by), (cx + bar_hw, by)], fill=(bright, bright, bright), width=1)
+            by = info_y - 7 * _SS
+            d.line([(cx - bar_hw, by), (cx + bar_hw, by)], fill=(bright, bright, bright), width=_SS)
 
-    # Separator — horizontal gradient line: bright at center, fades to black at edges
+    # Separator — 3-zone gradient line: bright center, dim edges; 6 draw calls total
     sep_p = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3)))
-    for sx in range(device.width):
-        fade = max(0.0, 1.0 - abs(sx - cx) / (cx * 0.90))
-        sc_  = tuple(int(c * sep_p * fade * 0.52) for c in accent)
+    for sx0, bfac in ((int(cx * 0.10), 0.18), (int(cx * 0.40), 0.34), (int(cx * 0.70), 0.52)):
+        sc_ = tuple(int(c * sep_p * bfac) for c in accent)
         if any(v > 0 for v in sc_):
-            d.point((sx, info_y - 4), fill=sc_)
-            d.point((sx, info_y - 5), fill=tuple(v // 2 for v in sc_))
+            d.line([(_W // 2 - cx + sx0, info_y - 4 * _SS), (_W // 2 + cx - sx0, info_y - 4 * _SS)],
+                   fill=sc_, width=_SS)
+            d.line([(_W // 2 - cx + sx0, info_y - 5 * _SS), (_W // 2 + cx - sx0, info_y - 5 * _SS)],
+                   fill=tuple(v // 2 for v in sc_), width=_SS)
 
     # Weather icon — GIF frames if available, procedural fallback; drawn before
     # badge so badge text always renders on top of the icon
-    icon_x = device.width - _GIF_ICON_SIZE          # right-edge aligned
-    icon_y = info_y + 3
+    icon_x = _W - _GIF_ICON_SIZE * _SS              # right-edge aligned
+    icon_y = info_y + 3 * _SS
     if msg in _GIF_ICONS:
         gif_frame = _GIF_ICONS[msg][frame % len(_GIF_ICONS[msg])]
         if stale:
@@ -864,7 +864,7 @@ def render_display(state, frame, needle_gust):
             gif_frame = Image.merge("RGBA", (gv, gv, gv, ac))
         img.paste(gif_frame, (icon_x, icon_y), gif_frame)
     else:
-        _draw_weather_icon(d, device.width - 20, info_y + 23, msg, frame, r=12)
+        _draw_weather_icon(d, _W - 20 * _SS, info_y + 23 * _SS, msg, frame, r=12 * _SS)
 
     # Row 1 — status word, pulsing fill for urgent states; grey when stale
     status_font = (font_huge if msg == "GOOD"
@@ -884,18 +884,18 @@ def render_display(state, frame, needle_gust):
     _, badge_bg = _STATUS_CONFIG[msg]
     if not stale and any(c > 0 for c in badge_bg):
         tw  = int(d.textlength(msg, font=status_font))
-        bx0 = cx - tw // 2 - 10
-        bx1 = cx + tw // 2 + 10
-        by0, by1 = info_y + 1, info_y + 46
+        bx0 = cx - tw // 2 - 10 * _SS
+        bx1 = cx + tw // 2 + 10 * _SS
+        by0, by1 = info_y + 1 * _SS, info_y + 46 * _SS
         gp = 0.35 + 0.65 * abs(math.sin(frame * math.pi / (FRAME_RATE * 1.5)))
-        for gw, gfac in ((3, 0.14), (1, 0.38)):
+        for gw, gfac in ((3 * _SS, 0.14), (1 * _SS, 0.38)):
             gc = tuple(min(255, int(c * gp * gfac)) for c in accent)
             d.rounded_rectangle([bx0 - gw, by0 - gw, bx1 + gw, by1 + gw],
-                                radius=6 + gw, outline=gc, width=1)
-        d.rounded_rectangle([bx0, by0, bx1, by1], radius=6, fill=badge_bg)
-    vib_x = [-1, 0, 1, 0][frame % 4] if msg == "TOO WINDY" and not stale else 0
-    d.text((cx + 1,       info_y + 22), msg, fill=(0, 0, 0),  font=status_font, anchor="mm")
-    d.text((cx + vib_x,   info_y + 21), msg, fill=text_fill,  font=status_font, anchor="mm")
+                                radius=6 * _SS + gw, outline=gc, width=_SS)
+        d.rounded_rectangle([bx0, by0, bx1, by1], radius=6 * _SS, fill=badge_bg)
+    vib_x = [-1 * _SS, 0, 1 * _SS, 0][frame % 4] if msg == "TOO WINDY" and not stale else 0
+    d.text((cx + 1 * _SS,  info_y + 22 * _SS), msg, fill=(0, 0, 0), font=status_font, anchor="mm")
+    d.text((cx + vib_x,    info_y + 21 * _SS), msg, fill=text_fill,  font=status_font, anchor="mm")
 
     # Row 2 — big gust number + "mph" unit; grey when stale
     if stale:
@@ -911,15 +911,15 @@ def render_display(state, frame, needle_gust):
     num_str = f"{needle_gust:.0f}"
     num_w   = int(d.textlength(num_str, font=font_status))
     unit_w  = int(d.textlength("mph",   font=font_unit))
-    grp_x   = (device.width - num_w - 8 - unit_w) // 2
-    d.text((grp_x + 2,               info_y + 85),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
-    d.text((grp_x,               info_y + 83),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
-    d.text((grp_x + num_w + 10,  info_y + 83 + 13), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
-    d.text((grp_x + num_w + 8,   info_y + 83 + 11), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
+    grp_x   = (_W - num_w - 8 * _SS - unit_w) // 2
+    d.text((grp_x + 2 * _SS,               info_y + 85 * _SS),              num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
+    d.text((grp_x,                         info_y + 83 * _SS),              num_str, fill=gust_fill,  font=font_status, anchor="lm")
+    d.text((grp_x + num_w + 10 * _SS,      info_y + 83 * _SS + 13 * _SS),  "mph",   fill=(0, 0, 0),  font=font_unit,   anchor="lm")
+    d.text((grp_x + num_w + 8  * _SS,      info_y + 83 * _SS + 11 * _SS),  "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
 
     # Trend arrow at left margin, below badge — left side keeps it clear of "mph"
     if trend is not None:
-        _draw_trend(d, 18, info_y + 63, trend)
+        _draw_trend(d, 18 * _SS, info_y + 63 * _SS, trend)
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     dir_tag  = f"  {wdir}" if wdir else ""
@@ -944,20 +944,24 @@ def render_display(state, frame, needle_gust):
     # Animated wave at screen bottom — completes the edge framing (2px tall)
     accent_dim  = tuple(c // 5 for c in accent)
     accent_dim2 = tuple(c // 10 for c in accent)
-    bwave_off   = (frame * 3) % 22
-    for bx in range(device.width):
-        by = device.height - 1 - int(2 * math.sin(2 * math.pi * (bx + bwave_off) / 22))
-        d.point((bx, by), fill=accent_dim)
+    bwave_off   = (frame * 3) % (22 * _SS)
+    bwave_row1, bwave_row2 = [], []
+    for bx in range(_W):
+        by = _H - 1 - int(2 * _SS * math.sin(2 * math.pi * (bx + bwave_off) / (22 * _SS)))
+        bwave_row1.append((bx, by))
         if by > 0:
-            d.point((bx, by - 1), fill=accent_dim2)
+            bwave_row2.append((bx, by - 1))
+    d.line(bwave_row1, fill=accent_dim)
+    if bwave_row2:
+        d.line(bwave_row2, fill=accent_dim2)
 
     # Dim accent-tinted corner data: water temp (bottom-left), wave height (bottom-right)
     if not stale:
-        ctc = tuple(max(0, int(c * 0.40)) for c in accent)
+        ctc = tuple(max(0, int(c * 0.45)) for c in accent)
         if wtmp is not None:
-            d.text((6, device.height - 12), f"{wtmp:.0f}°", fill=ctc, font=font_label, anchor="lm")
+            d.text((6 * _SS, _H - 16 * _SS), f"{wtmp:.0f}°", fill=ctc, font=font_data, anchor="lm")
         if wvht is not None:
-            d.text((device.width - 6, device.height - 12), f"{wvht:.1f}ft", fill=ctc, font=font_label, anchor="rm")
+            d.text((_W - 6 * _SS, _H - 16 * _SS), f"{wvht:.1f}ft", fill=ctc, font=font_data, anchor="rm")
 
     # Top strip: NOAA advisories → wind → marine → clock/wave
     _draw_alert_strip(d, alerts, frame, accent, y0=0,
@@ -996,8 +1000,8 @@ def handle_exit(sig, _frame):
     logging.info("Shutting down (signal %d)", sig)
     try:
         img, d = make_image()
-        draw_centered(d, 125, "Offline", (80, 80, 80), font_big)
-        device.display(img)
+        draw_centered(d, 125 * _SS, "Offline", (80, 80, 80), font_big)
+        _show(img)
     except Exception:
         pass
     sys.exit(0)
@@ -1081,8 +1085,7 @@ _WEB_PAGE = (
     "<style>"
     "*{margin:0;padding:0}"
     "html,body{width:100%;height:100%;background:#000;overflow:hidden}"
-    "img{display:block;width:100%;height:100%;object-fit:contain;"
-    "image-rendering:pixelated;image-rendering:crisp-edges}"
+    "img{display:block;width:100%;height:100%;object-fit:contain}"
     "</style></head><body>"
     "<img id='f' src='/frame'>"
     "<script>"
@@ -1090,11 +1093,11 @@ _WEB_PAGE = (
     "var el=document.getElementById(\'f\');"
     "function next(){"
     "var t=new Image();"
-    "t.onload=function(){el.src=t.src;setTimeout(next,200)};"
+    "t.onload=function(){el.src=t.src;setTimeout(next,150)};"
     "t.onerror=function(){setTimeout(next,1000)};"
     "t.src=\'/frame?\'+Date.now();"
     "}"
-    "setTimeout(next,200);"
+    "setTimeout(next,150);"
     "})();"
     "</script></body></html>"
 )
@@ -1186,14 +1189,14 @@ def main():
                 ec  = tuple(int(c * (0.35 + 0.65 * ep)) for c in _RED)
                 ec2 = tuple(c // 2 for c in ec)
                 # Layered pulsing corner triangles
-                for sz, col in ((30, ec2), (16, ec)):
+                for sz, col in ((30 * _SS, ec2), (16 * _SS, ec)):
                     d.polygon([(0, 0), (sz, 0), (0, sz)], fill=col)
-                    d.polygon([(device.width - 1, 0),
-                               (device.width - 1 - sz, 0),
-                               (device.width - 1, sz)], fill=col)
-                draw_centered(d, 78, "ERROR", ec, font_big)
+                    d.polygon([(_W - 1, 0),
+                               (_W - 1 - sz, 0),
+                               (_W - 1, sz)], fill=col)
+                draw_centered(d, 78 * _SS, "ERROR", ec, font_big)
                 err_text = textwrap.shorten(snap["error"], width=34, placeholder="…")
-                d.text((12, 150), err_text, fill=(160, 160, 160), font=font_data)
+                d.text((12 * _SS, 150 * _SS), err_text, fill=(160, 160, 160), font=font_data)
                 _show(img)
             except Exception:
                 logging.exception("Error screen render failed")
@@ -1203,20 +1206,20 @@ def main():
                 dots   = "." * ((frame // FRAME_RATE) % 4)
                 bright = int(60 + 30 * math.sin(frame * math.pi / (FRAME_RATE * 2)))
                 img, d = make_image()
-                cx_s  = device.width // 2
+                cx_s  = _W // 2
                 spin  = (frame * 14) % 360
                 bc    = (bright, bright, bright)
-                d.arc((cx_s - 30, 110, cx_s + 30, 170), spin, spin + 115, fill=bc, width=3)
-                d.arc((cx_s - 30, 110, cx_s + 30, 170), spin + 115, spin + 230,
-                      fill=(bright // 4, bright // 4, bright // 4), width=2)
+                d.arc((cx_s - 30 * _SS, 110 * _SS, cx_s + 30 * _SS, 170 * _SS), spin, spin + 115, fill=bc, width=3 * _SS)
+                d.arc((cx_s - 30 * _SS, 110 * _SS, cx_s + 30 * _SS, 170 * _SS), spin + 115, spin + 230,
+                      fill=(bright // 4, bright // 4, bright // 4), width=2 * _SS)
                 spin2 = (360 - frame * 9) % 360
-                d.arc((cx_s - 18, 122, cx_s + 18, 158), spin2, spin2 + 80,
-                      fill=(bright // 3, bright // 3, bright // 3), width=2)
-                draw_centered(d, 182, "PONTOON WIND",
+                d.arc((cx_s - 18 * _SS, 122 * _SS, cx_s + 18 * _SS, 158 * _SS), spin2, spin2 + 80,
+                      fill=(bright // 3, bright // 3, bright // 3), width=2 * _SS)
+                draw_centered(d, 182 * _SS, "PONTOON WIND",
                               (bright, bright, bright), font_title)
-                draw_centered(d, 198, "NDBC 41038 · Cape Fear",
+                draw_centered(d, 198 * _SS, "NDBC 41038 · Cape Fear",
                               (bright // 2, bright // 2, bright // 2), font_label)
-                draw_centered(d, 216, f"Connecting{dots}",
+                draw_centered(d, 216 * _SS, f"Connecting{dots}",
                               (bright - 20, bright - 20, bright - 20), font_data)
                 _show(img)
             except Exception:
