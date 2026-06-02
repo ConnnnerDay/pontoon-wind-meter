@@ -348,12 +348,12 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
     if status == "GOOD":
         scroll = (frame * 2) % 80
         for i, (wy_off, wc, wl_i, amp_i) in enumerate([
-            (10,  (0, 62, 40), 70, 3),
-            (30,  (0, 54, 35), 90, 5),
-            (52,  (0, 46, 30), 80, 4),
-            (74,  (0, 38, 25), 65, 3),
-            (96,  (0, 30, 20), 80, 4),
-            (118, (0, 22, 15), 95, 5),
+            (10,  (0,  99, 64), 70, 3),
+            (30,  (0,  86, 56), 90, 5),
+            (52,  (0,  74, 48), 80, 4),
+            (74,  (0,  61, 40), 65, 3),
+            (96,  (0,  48, 32), 80, 4),
+            (118, (0,  35, 24), 95, 5),
         ]):
             wy = y_top + wy_off
             if wy >= y_bot:
@@ -373,12 +373,12 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
             speed   = 1 + (i % 3)
             py_off  = span - (frame * speed + i * (span // 14)) % span
             py_pos  = y_top + int(py_off)
-            bright  = int(50 + 35 * math.sin(frame * math.pi / (FRAME_RATE * 2.2) + i * 0.8))
-            pc = (0, bright // 2, bright // 3)
+            bright  = int(65 + 55 * math.sin(frame * math.pi / (FRAME_RATE * 2.2) + i * 0.8))
+            pc = (0, int(bright * 0.70), int(bright * 0.45))
             if y_top <= py_pos < y_bot:
                 d.point((px_pos, py_pos), fill=pc)
                 if py_pos + 1 < y_bot:
-                    d.point((px_pos, py_pos + 1), fill=(0, bright // 5, bright // 7))
+                    d.point((px_pos, py_pos + 1), fill=(0, bright // 4, bright // 6))
 
     elif status == "CAUTION":
         info_h = y_bot - y_top
@@ -710,7 +710,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         ds = 4
         d.polygon([(wx, wy - ds), (wx + ds, wy), (wx, wy + ds), (wx - ds, wy)],
                   fill=(45, 45, 45), outline=(145, 145, 145))
-        d.text((cx, cy + 26), f"avg {wind:.0f}", fill=(90, 90, 90), font=font_data, anchor="mm")
+        d.text((cx, cy + 26), f"avg {wind:.0f}", fill=(120, 120, 120), font=font_data, anchor="mm")
 
     # Tiny gust history sparkline below avg text — oldest left, newest right
     if history and len(history) >= 2 and not stale:
@@ -726,12 +726,12 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
             py0 = syc - int(pts[j]     / maxv * h_sp)
             py1 = syc - int(pts[j + 1] / maxv * h_sp)
             v   = pts[j]
-            sc  = ((0, 50, 22) if v < GOOD_MPH
-                   else ((80, 62, 0) if v <= CAUTION_MPH else (80, 14, 14)))
+            sc  = ((0, 72, 32) if v < GOOD_MPH
+                   else ((108, 84, 0) if v <= CAUTION_MPH else (108, 20, 20)))
             d.line([(px0, py0), (px1, py1)], fill=sc, width=1)
         last_y = syc - int(pts[-1] / maxv * h_sp)
-        dot_c  = ((0, 140, 60) if pts[-1] < GOOD_MPH
-                  else ((160, 124, 0) if pts[-1] <= CAUTION_MPH else (160, 28, 28)))
+        dot_c  = ((0, 175, 80) if pts[-1] < GOOD_MPH
+                  else ((195, 152, 0) if pts[-1] <= CAUTION_MPH else (195, 45, 45)))
         d.ellipse((sx1 - 2, last_y - 2, sx1 + 2, last_y + 2), fill=dot_c)
 
     # Kite-shaped needle — soft glow arc at its angle for a back-lit instrument feel
@@ -848,7 +848,7 @@ def render_display(state, frame, needle_gust):
         freshness = max(0.0, 1.0 - age / STALE_MINUTES)
         bar_hw = int(42 * freshness)
         if bar_hw > 0:
-            bright = max(14, int(40 * freshness))
+            bright = max(24, int(65 * freshness))
             by = info_y - 7
             d.line([(cx - bar_hw, by), (cx + bar_hw, by)], fill=(bright, bright, bright), width=1)
 
@@ -856,7 +856,7 @@ def render_display(state, frame, needle_gust):
     sep_p = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3)))
     for sx in range(device.width):
         fade = max(0.0, 1.0 - abs(sx - cx) / (cx * 0.90))
-        sc_  = tuple(int(c * sep_p * fade * 0.40) for c in accent)
+        sc_  = tuple(int(c * sep_p * fade * 0.52) for c in accent)
         if any(v > 0 for v in sc_):
             d.point((sx, info_y - 4), fill=sc_)
             d.point((sx, info_y - 5), fill=tuple(v // 2 for v in sc_))
@@ -926,9 +926,9 @@ def render_display(state, frame, needle_gust):
     d.text((grp_x + num_w + 10,  info_y + 77 + 13), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
     d.text((grp_x + num_w + 8,   info_y + 77 + 11), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
 
-    # Trend arrow at right margin, below the GIF icon and beside "mph"
+    # Trend arrow at left margin, below badge — left side keeps it clear of "mph"
     if trend is not None:
-        _draw_trend(d, device.width - 14, info_y + 55, trend)
+        _draw_trend(d, 14, info_y + 55, trend)
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     dir_tag  = f"  {wdir}" if wdir else ""
@@ -950,16 +950,19 @@ def render_display(state, frame, needle_gust):
     # Pulsing accent strips framing the left/right screen edges
     _draw_edge_accents(d, accent, frame)
 
-    # Animated wave at screen bottom — completes the edge framing
-    accent_dim  = tuple(c // 6 for c in accent)
+    # Animated wave at screen bottom — completes the edge framing (2px tall)
+    accent_dim  = tuple(c // 5 for c in accent)
+    accent_dim2 = tuple(c // 10 for c in accent)
     bwave_off   = (frame * 3) % 22
     for bx in range(device.width):
-        by = device.height - 1 - int(1.5 * math.sin(2 * math.pi * (bx + bwave_off) / 22))
+        by = device.height - 1 - int(2 * math.sin(2 * math.pi * (bx + bwave_off) / 22))
         d.point((bx, by), fill=accent_dim)
+        if by > 0:
+            d.point((bx, by - 1), fill=accent_dim2)
 
     # Dim accent-tinted corner data: water temp (bottom-left), wave height (bottom-right)
     if not stale:
-        ctc = tuple(max(0, int(c * 0.22)) for c in accent)
+        ctc = tuple(max(0, int(c * 0.40)) for c in accent)
         if wtmp is not None:
             d.text((6, device.height - 12), f"{wtmp:.0f}°", fill=ctc, font=font_label, anchor="lm")
         if wvht is not None:
