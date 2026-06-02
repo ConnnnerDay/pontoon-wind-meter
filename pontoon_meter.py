@@ -22,7 +22,7 @@ URL             = "https://www.ndbc.noaa.gov/data/realtime2/41038.txt"
 ALERTS_URL      = "https://api.weather.gov/alerts/active?point=34.2108,-77.5986"
 POLL_INTERVAL   = 300   # seconds between NDBC refreshes
 ALERTS_INTERVAL = 600   # seconds between alert refreshes
-FRAME_RATE      = 10    # display frames per second
+FRAME_RATE      = 30    # display frames per second
 WEB_PORT        = 8080  # iframe dashboard HTTP port
 GAUGE_MAX       = 25    # mph, full-scale
 GOOD_MPH        = 12
@@ -110,6 +110,12 @@ _state = {
 _needle_gust = 0.0   # smoothed gust value driving the needle
 _needle_vel  = 0.0   # velocity for spring-damper overshoot physics
 
+# Needle spring-damper constants normalised to FRAME_RATE.
+# Original tuning: half-life=200ms, spring=0.28 at 5fps (dt=200ms).
+# Formula keeps the same real-time response at any frame rate.
+_NEEDLE_DAMPING = 0.50 ** (1.0 / (FRAME_RATE * 0.20))  # 0.50 at 5fps, 0.89 at 30fps
+_NEEDLE_SPRING  = 0.28  / (FRAME_RATE * 0.20)           # 0.28 at 5fps, 0.047 at 30fps
+
 # Web dashboard frame store — mutable list so no global declaration needed
 _frame_lock  = threading.Lock()
 _frame_store = [b""]   # [0] = latest rendered frame as PNG bytes
@@ -124,7 +130,7 @@ _show_counter = [0]
 def _show(img):
     """Push img to hardware display; encode PNG for the web dashboard every other call."""
     _show_counter[0] += 1
-    if _show_counter[0] % 2 == 0:
+    if _show_counter[0] % 4 == 0:
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         with _frame_lock:
@@ -1084,11 +1090,11 @@ _WEB_PAGE = (
     "var el=document.getElementById(\'f\');"
     "function next(){"
     "var t=new Image();"
-    "t.onload=function(){el.src=t.src;setTimeout(next,300)};"
+    "t.onload=function(){el.src=t.src;setTimeout(next,200)};"
     "t.onerror=function(){setTimeout(next,1000)};"
     "t.src=\'/frame?\'+Date.now();"
     "}"
-    "setTimeout(next,300);"
+    "setTimeout(next,200);"
     "})();"
     "</script></body></html>"
 )
@@ -1167,7 +1173,7 @@ def main():
         if snap["wind"] is not None:
             # Spring-damper: natural overshoot and settle like a real needle
             diff = snap["gust"] - _needle_gust
-            _needle_vel  = max(-6.0, min(6.0, _needle_vel * 0.50 + diff * 0.28))
+            _needle_vel  = max(-6.0, min(6.0, _needle_vel * _NEEDLE_DAMPING + diff * _NEEDLE_SPRING))
             _needle_gust = max(0.0, min(GAUGE_MAX + 3, _needle_gust + _needle_vel))
             try:
                 render_display(snap, frame, _needle_gust)
