@@ -132,9 +132,15 @@ _GIF_ICONS: dict = {}   # state → list of RGBA PIL Images
 
 _show_counter = [0]
 
+try:
+    _RESAMPLE_DOWN = Image.Resampling.BILINEAR
+except AttributeError:
+    _RESAMPLE_DOWN = Image.BILINEAR  # Pillow < 9.1
+
+
 def _show(img):
-    """Downscale 2× canvas to device resolution, push to display; encode PNG every 4th call."""
-    out = img.resize(device.size, Image.LANCZOS)
+    """Downscale 2× canvas to device resolution, push to display; encode PNG every 2nd call."""
+    out = img.resize(device.size, _RESAMPLE_DOWN)
     _show_counter[0] += 1
     if _show_counter[0] % 2 == 0:
         buf = io.BytesIO()
@@ -367,12 +373,9 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
             if wy >= y_bot:
                 continue
             ph   = i * 17 * _SS
-            prev = None
-            for px in range(_W + 1):
-                sy = wy + int(amp_i * _SS * math.sin(2 * math.pi * (px + scroll + ph) / (wl_i * _SS)))
-                if prev:
-                    d.line([prev, (px, sy)], fill=wc, width=_SS)
-                prev = (px, sy)
+            pts  = [(px, wy + int(amp_i * _SS * math.sin(2 * math.pi * (px + scroll + ph) / (wl_i * _SS))))
+                    for px in range(_W + 1)]
+            d.line(pts, fill=wc, width=_SS)
 
         # Floating upward particles — slow drift gives GOOD state a lively feel
         span = y_bot - y_top
@@ -455,12 +458,9 @@ def _draw_marine_wave(d, frame, color, y_mid):
     amplitude  = 3  * _SS
     wavelength = 55 * _SS
     offset     = (frame * 2) % wavelength
-    prev = None
-    for x in range(_W + 1):
-        y = y_mid + int(amplitude * math.sin(2 * math.pi * (x + offset) / wavelength))
-        if prev is not None:
-            d.line([prev, (x, y)], fill=color, width=_SS)
-        prev = (x, y)
+    pts = [(x, y_mid + int(amplitude * math.sin(2 * math.pi * (x + offset) / wavelength)))
+           for x in range(_W + 1)]
+    d.line(pts, fill=color, width=_SS)
 
 
 
@@ -699,7 +699,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         ds = 4 * _SS
         d.polygon([(wx, wy - ds), (wx + ds, wy), (wx, wy + ds), (wx - ds, wy)],
                   fill=(45, 45, 45), outline=(145, 145, 145))
-        d.text((cx, cy + 26 * _SS), f"avg {wind:.0f}", fill=(120, 120, 120), font=font_data, anchor="mm")
+        d.text((cx, cy + 26 * _SS), f"avg {wind:.0f}", fill=(155, 155, 155), font=font_data, anchor="mm")
 
     # Tiny gust history sparkline below avg text — oldest left, newest right
     if history and len(history) >= 2 and not stale:
@@ -715,8 +715,8 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
             py0 = syc - int(pts[j]     / maxv * h_sp)
             py1 = syc - int(pts[j + 1] / maxv * h_sp)
             v   = pts[j]
-            sc  = ((0, 72, 32) if v < GOOD_MPH
-                   else ((108, 84, 0) if v <= CAUTION_MPH else (108, 20, 20)))
+            sc  = ((0, 95, 45) if v < GOOD_MPH
+                   else ((130, 100, 0) if v <= CAUTION_MPH else (130, 28, 28)))
             d.line([(px0, py0), (px1, py1)], fill=sc, width=_SS)
         last_y = syc - int(pts[-1] / maxv * h_sp)
         dot_c  = ((0, 175, 80) if pts[-1] < GOOD_MPH
@@ -842,14 +842,15 @@ def render_display(state, frame, needle_gust):
             by = info_y - 7 * _SS
             d.line([(cx - bar_hw, by), (cx + bar_hw, by)], fill=(bright, bright, bright), width=_SS)
 
-    # Separator — horizontal gradient line: bright at center, fades to black at edges
+    # Separator — 3-zone gradient line: bright center, dim edges; 6 draw calls total
     sep_p = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3)))
-    for sx in range(_W):
-        fade = max(0.0, 1.0 - abs(sx - cx) / (cx * 0.90))
-        sc_  = tuple(int(c * sep_p * fade * 0.52) for c in accent)
+    for sx0, bfac in ((int(cx * 0.10), 0.18), (int(cx * 0.40), 0.34), (int(cx * 0.70), 0.52)):
+        sc_ = tuple(int(c * sep_p * bfac) for c in accent)
         if any(v > 0 for v in sc_):
-            d.point((sx, info_y - 4 * _SS), fill=sc_)
-            d.point((sx, info_y - 5 * _SS), fill=tuple(v // 2 for v in sc_))
+            d.line([(_W // 2 - cx + sx0, info_y - 4 * _SS), (_W // 2 + cx - sx0, info_y - 4 * _SS)],
+                   fill=sc_, width=_SS)
+            d.line([(_W // 2 - cx + sx0, info_y - 5 * _SS), (_W // 2 + cx - sx0, info_y - 5 * _SS)],
+                   fill=tuple(v // 2 for v in sc_), width=_SS)
 
     # Weather icon — GIF frames if available, procedural fallback; drawn before
     # badge so badge text always renders on top of the icon
@@ -944,19 +945,23 @@ def render_display(state, frame, needle_gust):
     accent_dim  = tuple(c // 5 for c in accent)
     accent_dim2 = tuple(c // 10 for c in accent)
     bwave_off   = (frame * 3) % (22 * _SS)
+    bwave_row1, bwave_row2 = [], []
     for bx in range(_W):
         by = _H - 1 - int(2 * _SS * math.sin(2 * math.pi * (bx + bwave_off) / (22 * _SS)))
-        d.point((bx, by), fill=accent_dim)
+        bwave_row1.append((bx, by))
         if by > 0:
-            d.point((bx, by - 1), fill=accent_dim2)
+            bwave_row2.append((bx, by - 1))
+    d.line(bwave_row1, fill=accent_dim)
+    if bwave_row2:
+        d.line(bwave_row2, fill=accent_dim2)
 
     # Dim accent-tinted corner data: water temp (bottom-left), wave height (bottom-right)
     if not stale:
-        ctc = tuple(max(0, int(c * 0.40)) for c in accent)
+        ctc = tuple(max(0, int(c * 0.45)) for c in accent)
         if wtmp is not None:
-            d.text((6 * _SS, _H - 12 * _SS), f"{wtmp:.0f}°", fill=ctc, font=font_label, anchor="lm")
+            d.text((6 * _SS, _H - 16 * _SS), f"{wtmp:.0f}°", fill=ctc, font=font_data, anchor="lm")
         if wvht is not None:
-            d.text((_W - 6 * _SS, _H - 12 * _SS), f"{wvht:.1f}ft", fill=ctc, font=font_label, anchor="rm")
+            d.text((_W - 6 * _SS, _H - 16 * _SS), f"{wvht:.1f}ft", fill=ctc, font=font_data, anchor="rm")
 
     # Top strip: NOAA advisories → wind → marine → clock/wave
     _draw_alert_strip(d, alerts, frame, accent, y0=0,
