@@ -443,9 +443,9 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
                     continue
                 sx = int((bxs[j] * _SS - frame * spd[j]) % _W)
                 ex = sx + lns[j] * _SS
-                bright = 35 + int(30 * math.sin(
+                bright = 55 + int(35 * math.sin(
                     frame * math.pi / (FRAME_RATE * 0.8) + j * math.pi / 4))
-                sc = (bright, bright, bright)
+                sc = (bright, bright // 2, bright // 4)
                 if ex <= _W:
                     d.line([(sx, sy), (ex, sy)], fill=sc, width=2 * _SS)
                 else:
@@ -870,16 +870,7 @@ def render_display(state, frame, needle_gust):
     status_font = (font_huge if msg == "GOOD"
                    else font_wide if msg == "TOO WINDY"
                    else font_big)
-    if stale:
-        text_fill = (55, 55, 55)
-    else:
-        if msg == "TOO WINDY":
-            pv = int(55 * math.sin(frame * math.pi / (FRAME_RATE * 0.8)))
-        elif msg == "CAUTION":
-            pv = int(25 * math.sin(frame * math.pi / (FRAME_RATE * 1.5)))
-        else:
-            pv = 0
-        text_fill = tuple(min(255, max(0, c + pv)) for c in accent)
+    text_fill = (55, 55, 55) if stale else (255, 255, 255)
     # Dark badge behind status word — layered outer glow then filled rect
     _, badge_bg = _STATUS_CONFIG[msg]
     if not stale and any(c > 0 for c in badge_bg):
@@ -901,13 +892,15 @@ def render_display(state, frame, needle_gust):
     if stale:
         gust_fill = (50, 50, 50)
         mph_fill  = (40, 40, 40)
-    elif needle_gust >= CAUTION_MPH:
-        gp = 0.55 + 0.45 * math.sin(frame * math.pi / (FRAME_RATE * 1.0))
-        gust_fill = tuple(min(255, int(c * gp)) for c in accent)
-        mph_fill  = tuple(max(0, int(c * 0.50)) for c in accent)
+    elif needle_gust > CAUTION_MPH:
+        gust_fill = (255, 100, 80)
+        mph_fill  = (200, 70, 55)
+    elif needle_gust >= GOOD_MPH:
+        gust_fill = (255, 215, 50)
+        mph_fill  = (200, 165, 30)
     else:
-        gust_fill = (230, 230, 230)
-        mph_fill  = (190, 190, 190)
+        gust_fill = (235, 235, 235)
+        mph_fill  = (175, 175, 175)
     num_str = f"{needle_gust:.0f}"
     num_w   = int(d.textlength(num_str, font=font_status))
     unit_w  = int(d.textlength("mph",   font=font_unit))
