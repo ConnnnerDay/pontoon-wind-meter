@@ -220,8 +220,8 @@ def _draw_compass(d, cx, cy, r, wdir_str):
                (int(rr_x), int(rr_y))], fill=(225, 225, 225))
     d.line([(int(base_x), int(base_y)), (int(tail_x), int(tail_y))],
            fill=(130, 130, 130), width=1)
-    # Abbreviation in the lower half of the circle, dim so arrow reads over it
-    d.text((cx, cy + 3), wdir_str, fill=(95, 95, 95), font=font_label, anchor="mt")
+    # Abbreviation in the lower half of the circle
+    d.text((cx, cy + 3), wdir_str, fill=(130, 130, 130), font=font_label, anchor="mt")
 
 
 def _draw_wind_streaks(d, cx, cy, r, gust, frame):
@@ -832,14 +832,17 @@ def render_display(state, frame, needle_gust):
     num_w   = int(d.textlength(num_str, font=font_status))
     unit_w  = int(d.textlength("mph",   font=font_unit))
     grp_x   = (device.width - num_w - 8 - unit_w) // 2
-    d.text((grp_x + 1,              info_y + 78),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
-    d.text((grp_x,              info_y + 77),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
-    d.text((grp_x + num_w + 9,  info_y + 77 + 12), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
-    d.text((grp_x + num_w + 8,  info_y + 77 + 11), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
+    d.text((grp_x + 2,               info_y + 79),      num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
+    d.text((grp_x,               info_y + 77),      num_str, fill=gust_fill,  font=font_status, anchor="lm")
+    d.text((grp_x + num_w + 10,  info_y + 77 + 13), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
+    d.text((grp_x + num_w + 8,   info_y + 77 + 11), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
 
     # Trend arrow at right margin, vertically centered on the gust row
     if trend is not None:
         _draw_trend(d, device.width - 16, info_y + 71, trend)
+
+    # Animated weather icon — right margin, level with the status badge
+    _draw_weather_icon(d, device.width - 20, info_y + 23, msg, frame, r=12)
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     dir_tag  = f"  {wdir}" if wdir else ""
@@ -867,6 +870,14 @@ def render_display(state, frame, needle_gust):
     for bx in range(device.width):
         by = device.height - 1 - int(1.5 * math.sin(2 * math.pi * (bx + bwave_off) / 22))
         d.point((bx, by), fill=accent_dim)
+
+    # Dim accent-tinted corner data: water temp (bottom-left), wave height (bottom-right)
+    if not stale:
+        ctc = tuple(max(0, int(c * 0.22)) for c in accent)
+        if wtmp is not None:
+            d.text((6, device.height - 12), f"{wtmp:.0f}°", fill=ctc, font=font_label, anchor="lm")
+        if wvht is not None:
+            d.text((device.width - 6, device.height - 12), f"{wvht:.1f}ft", fill=ctc, font=font_label, anchor="rm")
 
     # Top strip: NOAA advisories → wind → marine → clock/wave
     _draw_alert_strip(d, alerts, frame, accent, y0=0,
