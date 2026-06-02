@@ -114,6 +114,10 @@ _needle_vel  = 0.0   # velocity for spring-damper overshoot physics
 _frame_lock  = threading.Lock()
 _frame_store = [b""]   # [0] = latest rendered frame as PNG bytes
 
+# Pre-loaded GIF weather icon frames (48px, nearest-neighbor from 160×160 source)
+_GIF_ICON_SIZE = 48
+_GIF_ICONS: dict = {}   # state → list of RGBA PIL Images
+
 
 def _show(img):
     """Encode img as PNG for the web dashboard, then push it to the hardware display."""
@@ -300,6 +304,43 @@ def _draw_weather_icon(d, x, y, status, frame, r=18):
         for j, (y_off, x_len) in enumerate([(-6, 12), (0, 16), (6, 10)]):
             lc_j = tuple(int(c * pulse * (1 - j * 0.15)) for c in (180, 180, 180))
             d.line([(x - r, y + y_off), (x - r + x_len, y + y_off)], fill=lc_j, width=2)
+
+
+def _load_gif_icons():
+    """Load and resize weather GIF frames once at startup."""
+    try:
+        _resample = Image.Resampling.NEAREST
+    except AttributeError:
+        _resample = Image.NEAREST  # Pillow < 9.1
+    assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+    files = {"GOOD": "clear-day.gif", "CAUTION": "rain.gif", "TOO WINDY": "wind.gif"}
+    for state, fname in files.items():
+        path = os.path.join(assets, fname)
+        if not os.path.exists(path):
+            logging.warning("Weather icon missing: %s", path)
+            continue
+        frames, i = [], 0
+        try:
+            gif = Image.open(path)
+            while True:
+                try:
+                    gif.seek(i)
+                    f = gif.convert("RGBA").resize(
+                        (_GIF_ICON_SIZE, _GIF_ICON_SIZE), _resample)
+                    # Key out near-black pixels (LED matrix "off" state)
+                    px = [(r, g, b, 0) if r + g + b < 20 else (r, g, b, a)
+                          for r, g, b, a in f.getdata()]
+                    f.putdata(px)
+                    frames.append(f)
+                    i += 1
+                except EOFError:
+                    break
+        except Exception as exc:
+            logging.warning("Cannot load %s: %s", fname, exc)
+            continue
+        if frames:
+            _GIF_ICONS[state] = frames
+            logging.info("GIF icon %s: %d frames at %dpx", state, len(frames), _GIF_ICON_SIZE)
 
 
 def _draw_info_bg(d, y_top, y_bot, status, frame):
@@ -820,6 +861,20 @@ def render_display(state, frame, needle_gust):
             d.point((sx, info_y - 4), fill=sc_)
             d.point((sx, info_y - 5), fill=tuple(v // 2 for v in sc_))
 
+    # Weather icon — GIF frames if available, procedural fallback; drawn before
+    # badge so badge text always renders on top of the icon
+    icon_x = device.width - _GIF_ICON_SIZE          # right-edge aligned
+    icon_y = info_y + 3
+    if msg in _GIF_ICONS:
+        gif_frame = _GIF_ICONS[msg][frame % len(_GIF_ICONS[msg])]
+        if stale:
+            rc, gc, bc, ac = gif_frame.split()
+            gv = rc.point(lambda x: int(x * 0.35))
+            gif_frame = Image.merge("RGBA", (gv, gv, gv, ac))
+        img.paste(gif_frame, (icon_x, icon_y), gif_frame)
+    else:
+        _draw_weather_icon(d, device.width - 20, info_y + 23, msg, frame, r=12)
+
     # Row 1 — status word, pulsing fill for urgent states; grey when stale
     status_font = (font_huge if msg == "GOOD"
                    else font_wide if msg == "TOO WINDY"
@@ -874,9 +929,6 @@ def render_display(state, frame, needle_gust):
     # Trend arrow at right margin, vertically centered on the gust row
     if trend is not None:
         _draw_trend(d, device.width - 16, info_y + 71, trend)
-
-    # Animated weather icon — right margin, level with the status badge
-    _draw_weather_icon(d, device.width - 20, info_y + 23, msg, frame, r=12)
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     dir_tag  = f"  {wdir}" if wdir else ""
@@ -1111,6 +1163,7 @@ def _start_web_server():
 def main():
     global _needle_gust, _needle_vel
 
+    _load_gif_icons()
     _start_web_server()
     threading.Thread(target=_data_loop, daemon=True).start()
 
