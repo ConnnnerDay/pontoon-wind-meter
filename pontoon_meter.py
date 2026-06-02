@@ -323,9 +323,9 @@ def _draw_weather_icon(d, x, y, status, frame, r=18):
 def _load_gif_icons():
     """Load and resize weather GIF frames once at startup."""
     try:
-        _resample = Image.Resampling.NEAREST
+        _resample = Image.Resampling.LANCZOS
     except AttributeError:
-        _resample = Image.NEAREST  # Pillow < 9.1
+        _resample = Image.LANCZOS  # Pillow < 9.1
     assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
     files = {"GOOD": "clear-day.gif", "CAUTION": "rain.gif", "TOO WINDY": "wind.gif"}
     for state, fname in files.items():
@@ -341,8 +341,8 @@ def _load_gif_icons():
                     gif.seek(i)
                     f = gif.convert("RGBA").resize(
                         (_GIF_ICON_SIZE * _SS, _GIF_ICON_SIZE * _SS), _resample)
-                    # Key out near-black pixels (LED matrix "off" state)
-                    px = [(r, g, b, 0) if r + g + b < 20 else (r, g, b, a)
+                    # Key out black background; threshold 30 handles LANCZOS anti-aliased edges
+                    px = [(r, g, b, 0) if r + g + b < 30 else (r, g, b, a)
                           for r, g, b, a in f.getdata()]
                     f.putdata(px)
                     frames.append(f)
