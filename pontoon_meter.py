@@ -571,6 +571,13 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END,  fill=_dim(_YELLOW, dim), width=16)
     d.arc(box, CAUTION_ARC_END, arc_end,          fill=_dim(_RED,    dim), width=16)
 
+    # Thin specular highlight at the inner edge of each arc band — adds depth
+    ih   = r - 8
+    ibox = (cx - ih, cy - ih, cx + ih, cy + ih)
+    d.arc(ibox, _GAUGE_ARC_START, GOOD_ARC_END,   fill=_dim(_GREEN,  dim * 0.55), width=2)
+    d.arc(ibox, GOOD_ARC_END,    CAUTION_ARC_END, fill=_dim(_YELLOW, dim * 0.55), width=2)
+    d.arc(ibox, CAUTION_ARC_END, arc_end,         fill=_dim(_RED,    dim * 0.55), width=2)
+
     # Pulsing overlay on the currently-active zone arc — breathes to indicate live zone
     if not stale:
         zp = 0.12 + 0.10 * math.sin(frame * math.pi / (FRAME_RATE * 1.8))
@@ -618,12 +625,15 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         d.line([(int(x1), int(y1)), (int(x2), int(y2))],
                fill=tick_c, width=2 if is_major else 1)
 
-    # Zone-boundary labels: just the two threshold values, inside the gauge face
-    for mph_val, lbl in [(GOOD_MPH, str(GOOD_MPH)), (CAUTION_MPH, str(CAUTION_MPH))]:
+    # Zone-boundary labels — tinted to match the zone they mark
+    for mph_val, lbl, lbl_c in [
+        (GOOD_MPH,    str(GOOD_MPH),    _dim(_GREEN,  dim * 0.75)),
+        (CAUTION_MPH, str(CAUTION_MPH), _dim(_YELLOW, dim * 0.75)),
+    ]:
         ang = _gauge_ang(mph_val)
         ca, sa = math.cos(ang), math.sin(ang)
         lx, ly = cx + (r - 28) * ca, cy + (r - 28) * sa
-        d.text((int(lx), int(ly)), lbl, fill=(155, 155, 155), font=font_data, anchor="mm")
+        d.text((int(lx), int(ly)), lbl, fill=lbl_c, font=font_data, anchor="mm")
 
     # Dim "GUST" label in upper-center of gauge interior — context for the needle
     d.text((cx, cy - 50), "GUST", fill=(48, 48, 48), font=font_label, anchor="mm")
@@ -801,10 +811,14 @@ def render_display(state, frame, needle_gust):
             by = info_y - 7
             d.line([(cx - bar_hw, by), (cx + bar_hw, by)], fill=(bright, bright, bright), width=1)
 
-    # Pulsing separator — slowly breathes in the accent color
-    sep_p   = 0.25 + 0.75 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3)))
-    sep_col = tuple(int(c * sep_p * 0.22) for c in accent)
-    d.line([0, info_y - 4, device.width, info_y - 4], fill=sep_col)
+    # Separator — horizontal gradient line: bright at center, fades to black at edges
+    sep_p = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3)))
+    for sx in range(device.width):
+        fade = max(0.0, 1.0 - abs(sx - cx) / (cx * 0.90))
+        sc_  = tuple(int(c * sep_p * fade * 0.40) for c in accent)
+        if any(v > 0 for v in sc_):
+            d.point((sx, info_y - 4), fill=sc_)
+            d.point((sx, info_y - 5), fill=tuple(v // 2 for v in sc_))
 
     # Row 1 — status word, pulsing fill for urgent states; grey when stale
     status_font = (font_huge if msg == "GOOD"
@@ -820,13 +834,19 @@ def render_display(state, frame, needle_gust):
         else:
             pv = 0
         text_fill = tuple(min(255, max(0, c + pv)) for c in accent)
-    # Dark badge behind status word — gives the text a solid background
+    # Dark badge behind status word — layered outer glow then filled rect
     _, badge_bg = _STATUS_CONFIG[msg]
     if not stale and any(c > 0 for c in badge_bg):
-        tw = int(d.textlength(msg, font=status_font))
-        d.rounded_rectangle(
-            [cx - tw // 2 - 10, info_y + 1, cx + tw // 2 + 10, info_y + 46],
-            radius=6, fill=badge_bg)
+        tw  = int(d.textlength(msg, font=status_font))
+        bx0 = cx - tw // 2 - 10
+        bx1 = cx + tw // 2 + 10
+        by0, by1 = info_y + 1, info_y + 46
+        gp = 0.35 + 0.65 * abs(math.sin(frame * math.pi / (FRAME_RATE * 1.5)))
+        for gw, gfac in ((4, 0.10), (3, 0.16), (2, 0.26), (1, 0.44)):
+            gc = tuple(min(255, int(c * gp * gfac)) for c in accent)
+            d.rounded_rectangle([bx0 - gw, by0 - gw, bx1 + gw, by1 + gw],
+                                radius=6 + gw, outline=gc, width=1)
+        d.rounded_rectangle([bx0, by0, bx1, by1], radius=6, fill=badge_bg)
     vib_x = [-1, 0, 1, 0][frame % 4] if msg == "TOO WINDY" and not stale else 0
     d.text((cx + 1,       info_y + 22), msg, fill=(0, 0, 0),  font=status_font, anchor="mm")
     d.text((cx + vib_x,   info_y + 21), msg, fill=text_fill,  font=status_font, anchor="mm")
