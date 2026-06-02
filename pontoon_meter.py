@@ -85,7 +85,7 @@ font_status = _load_bold(108)  # gust number — massive
 font_data   = _load_font(22)
 font_label  = _load_font(14)
 font_strip  = _load_font(16)   # advisory strip (slightly larger than label)
-font_unit   = _load_bold(32)   # mph unit beside gust
+font_unit   = _load_bold(36)   # mph unit beside gust
 font_big    = _load_bold(64)   # status CAUTION
 font_wide   = _load_bold(48)   # status TOO WINDY (longer text)
 font_huge   = _load_bold(80)   # status GOOD (short word, max size)
@@ -175,13 +175,13 @@ def _trend(history):
 
 
 def _draw_trend(d, cx, y, trend):
-    """18 px tall directional indicator: up = rising, down = easing, dash = steady."""
+    """24 px tall directional indicator: up = rising, down = easing, dash = steady."""
     if trend == "up":
-        d.polygon([(cx, y), (cx - 8, y + 18), (cx + 8, y + 18)], fill=(240, 130, 0))
+        d.polygon([(cx, y), (cx - 10, y + 24), (cx + 10, y + 24)], fill=(240, 130, 0))
     elif trend == "down":
-        d.polygon([(cx, y + 18), (cx - 8, y), (cx + 8, y)], fill=(0, 145, 200))
+        d.polygon([(cx, y + 24), (cx - 10, y), (cx + 10, y)], fill=(0, 145, 200))
     else:
-        d.line([(cx - 9, y + 9), (cx + 9, y + 9)], fill=(85, 85, 85), width=3)
+        d.line([(cx - 11, y + 12), (cx + 11, y + 12)], fill=(85, 85, 85), width=4)
 
 
 def _draw_speed_lines(d, cx, cy, r):
@@ -841,7 +841,7 @@ def render_display(state, frame, needle_gust):
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind, history=history)
 
     # Compass rose inside the arc — upper-left to clear the "18" label at upper-right
-    _draw_compass(d, cx - 40, cy - 24, 17, wdir)
+    _draw_compass(d, cx - 40, cy - 24, 20, wdir)
 
     # Data freshness bar — centered horizontal line in the gauge mouth gap
     if age is not None:
@@ -917,7 +917,7 @@ def render_display(state, frame, needle_gust):
     else:
         gust_fill = (220, 220, 220)
         mph_fill  = (140, 140, 140)
-    num_str = f"{needle_gust:.1f}"
+    num_str = f"{needle_gust:.0f}"
     num_w   = int(d.textlength(num_str, font=font_status))
     unit_w  = int(d.textlength("mph",   font=font_unit))
     grp_x   = (device.width - num_w - 8 - unit_w) // 2
@@ -926,9 +926,9 @@ def render_display(state, frame, needle_gust):
     d.text((grp_x + num_w + 10,  info_y + 77 + 13), "mph",   fill=(0, 0, 0),   font=font_unit,   anchor="lm")
     d.text((grp_x + num_w + 8,   info_y + 77 + 11), "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
 
-    # Trend arrow at right margin, vertically centered on the gust row
+    # Trend arrow at right margin, below the GIF icon and beside "mph"
     if trend is not None:
-        _draw_trend(d, device.width - 16, info_y + 71, trend)
+        _draw_trend(d, device.width - 14, info_y + 55, trend)
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     dir_tag  = f"  {wdir}" if wdir else ""
