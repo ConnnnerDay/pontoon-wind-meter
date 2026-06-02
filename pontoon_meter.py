@@ -136,7 +136,7 @@ def _show(img):
     """Downscale 2× canvas to device resolution, push to display; encode PNG every 4th call."""
     out = img.resize(device.size, Image.LANCZOS)
     _show_counter[0] += 1
-    if _show_counter[0] % 4 == 0:
+    if _show_counter[0] % 2 == 0:
         buf = io.BytesIO()
         out.save(buf, format="PNG")
         with _frame_lock:
@@ -202,18 +202,6 @@ def _draw_trend(d, cx, y, trend):
         d.line([(cx - 11 * _SS, y + h // 2), (cx + 11 * _SS, y + h // 2)],
                fill=(85, 85, 85), width=4 * _SS)
 
-
-def _draw_speed_lines(d, cx, cy, r):
-    """Very faint radial lines spanning the gauge face — speedometer texture."""
-    inner  = 18
-    outer  = r - 26
-    n      = 24
-    for i in range(n + 1):
-        ang = math.pi * i / n
-        ca, sa = math.cos(ang), math.sin(ang)
-        d.line([(int(cx + inner * ca), int(cy - inner * sa)),
-                (int(cx + outer * ca), int(cy - outer * sa))],
-               fill=(14, 14, 14), width=1)
 
 
 def _draw_compass(d, cx, cy, r, wdir_str):
@@ -285,44 +273,45 @@ def _draw_weather_icon(d, x, y, status, frame, r=18):
     """Animated weather icon: breathing sun (GOOD), cloud+rain (CAUTION), double bolt (TOO WINDY)."""
     if status == "GOOD":
         breathe = 1 + 0.15 * math.sin(frame * math.pi / FRAME_RATE)
-        disc_r  = max(2, int((r - 5) * breathe))
+        disc_r  = max(2 * _SS, int((r - 5 * _SS) * breathe))
         rot     = (frame * 3) % 360
         for i in range(8):
             ang    = math.radians(rot + i * 45)
             ca, sa = math.cos(ang), math.sin(ang)
-            ray_r  = r if i % 2 == 0 else r - 4
+            ray_r  = r if i % 2 == 0 else r - 4 * _SS
             bright = int(200 + 55 * math.sin(frame * math.pi / FRAME_RATE + i * math.pi / 4))
             bright = max(140, min(255, bright))
-            x1 = int(x + (disc_r + 2) * ca);  y1 = int(y + (disc_r + 2) * sa)
-            x2 = int(x + ray_r * ca);           y2 = int(y + ray_r * sa)
-            d.line([(x1, y1), (x2, y2)], fill=(bright, int(bright * 0.78), 0), width=2)
+            x1 = int(x + (disc_r + 2 * _SS) * ca);  y1 = int(y + (disc_r + 2 * _SS) * sa)
+            x2 = int(x + ray_r * ca);                 y2 = int(y + ray_r * sa)
+            d.line([(x1, y1), (x2, y2)], fill=(bright, int(bright * 0.78), 0), width=2 * _SS)
         d.ellipse((x - disc_r, y - disc_r, x + disc_r, y + disc_r), fill=(255, 200, 20))
 
     elif status == "CAUTION":
         pulse = 0.75 + 0.25 * math.sin(frame * math.pi / (FRAME_RATE * 1.5))
         cc    = tuple(int(c * pulse) for c in (155, 170, 185))
-        for bx, by, br in [(-5, 2, 5), (5, 2, 5), (0, -3, 7)]:
+        for bx, by, br in [(-5*_SS, 2*_SS, 5*_SS), (5*_SS, 2*_SS, 5*_SS), (0, -3*_SS, 7*_SS)]:
             d.ellipse((x+bx-br, y+by-br, x+bx+br, y+by+br), fill=cc)
-        cloud_base = y + 7
+        cloud_base = y + 7 * _SS
         for i in range(4):
-            dx     = x - 6 + i * 4
-            drop_y = cloud_base + (frame * 2 + i * 3) % 12
-            if drop_y <= y + r - 2:
+            dx     = x - 6 * _SS + i * 4 * _SS
+            drop_y = cloud_base + (frame * 2 + i * 3) % (12 * _SS)
+            if drop_y <= y + r - 2 * _SS:
                 alpha = int(180 + 60 * math.sin(frame * math.pi / FRAME_RATE + i * math.pi / 2))
-                d.line([(dx, drop_y), (dx, drop_y + 3)],
-                       fill=(70, 130, min(255, alpha)), width=2)
+                d.line([(dx, drop_y), (dx, drop_y + 3 * _SS)],
+                       fill=(70, 130, min(255, alpha)), width=2 * _SS)
 
     else:   # TOO WINDY — double lightning bolt with speed lines
         pulse = 0.5 + 0.5 * math.sin(frame * math.pi / (FRAME_RATE * 0.5))
         lc    = (min(255, int(230 * pulse + 40)), min(255, int(100 * pulse)), 0)
         dim   = tuple(max(0, int(c * 0.6)) for c in lc)
-        d.polygon([(x-1, y-r+2), (x+2,  y-1), (x-3, y-1)], fill=dim)
-        d.polygon([(x-5, y+r-2), (x-2,  y+1), (x-6, y+1)], fill=dim)
-        d.polygon([(x+4, y-r+2), (x+7,  y-1), (x+1, y-1)], fill=lc)
-        d.polygon([(x,   y+r-2), (x+3,  y+1), (x-3, y+1)], fill=lc)
+        s = _SS
+        d.polygon([(x-s, y-r+2*s), (x+2*s, y-s), (x-3*s, y-s)], fill=dim)
+        d.polygon([(x-5*s, y+r-2*s), (x-2*s, y+s), (x-6*s, y+s)], fill=dim)
+        d.polygon([(x+4*s, y-r+2*s), (x+7*s, y-s), (x+s, y-s)], fill=lc)
+        d.polygon([(x, y+r-2*s), (x+3*s, y+s), (x-3*s, y+s)], fill=lc)
         for j, (y_off, x_len) in enumerate([(-6, 12), (0, 16), (6, 10)]):
             lc_j = tuple(int(c * pulse * (1 - j * 0.15)) for c in (180, 180, 180))
-            d.line([(x - r, y + y_off), (x - r + x_len, y + y_off)], fill=lc_j, width=2)
+            d.line([(x - r, y + y_off * s), (x - r + x_len * s, y + y_off * s)], fill=lc_j, width=2 * _SS)
 
 
 def _load_gif_icons():
@@ -1091,8 +1080,7 @@ _WEB_PAGE = (
     "<style>"
     "*{margin:0;padding:0}"
     "html,body{width:100%;height:100%;background:#000;overflow:hidden}"
-    "img{display:block;width:100%;height:100%;object-fit:contain;"
-    "image-rendering:pixelated;image-rendering:crisp-edges}"
+    "img{display:block;width:100%;height:100%;object-fit:contain}"
     "</style></head><body>"
     "<img id='f' src='/frame'>"
     "<script>"
@@ -1100,11 +1088,11 @@ _WEB_PAGE = (
     "var el=document.getElementById(\'f\');"
     "function next(){"
     "var t=new Image();"
-    "t.onload=function(){el.src=t.src;setTimeout(next,200)};"
+    "t.onload=function(){el.src=t.src;setTimeout(next,150)};"
     "t.onerror=function(){setTimeout(next,1000)};"
     "t.src=\'/frame?\'+Date.now();"
     "}"
-    "setTimeout(next,200);"
+    "setTimeout(next,150);"
     "})();"
     "</script></body></html>"
 )
