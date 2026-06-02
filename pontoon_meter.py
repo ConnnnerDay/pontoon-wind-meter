@@ -22,7 +22,7 @@ URL             = "https://www.ndbc.noaa.gov/data/realtime2/41038.txt"
 ALERTS_URL      = "https://api.weather.gov/alerts/active?point=34.2108,-77.5986"
 POLL_INTERVAL   = 300   # seconds between NDBC refreshes
 ALERTS_INTERVAL = 600   # seconds between alert refreshes
-FRAME_RATE      = 5     # display frames per second
+FRAME_RATE      = 10    # display frames per second
 WEB_PORT        = 8080  # iframe dashboard HTTP port
 GAUGE_MAX       = 25    # mph, full-scale
 GOOD_MPH        = 12
@@ -119,12 +119,16 @@ _GIF_ICON_SIZE = 48
 _GIF_ICONS: dict = {}   # state → list of RGBA PIL Images
 
 
+_show_counter = [0]
+
 def _show(img):
-    """Encode img as PNG for the web dashboard, then push it to the hardware display."""
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    with _frame_lock:
-        _frame_store[0] = buf.getvalue()
+    """Push img to hardware display; encode PNG for the web dashboard every other call."""
+    _show_counter[0] += 1
+    if _show_counter[0] % 2 == 0:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        with _frame_lock:
+            _frame_store[0] = buf.getvalue()
     device.display(img)
 
 
@@ -1080,11 +1084,11 @@ _WEB_PAGE = (
     "var el=document.getElementById(\'f\');"
     "function next(){"
     "var t=new Image();"
-    "t.onload=function(){el.src=t.src;setTimeout(next,500)};"
-    "t.onerror=function(){setTimeout(next,2000)};"
+    "t.onload=function(){el.src=t.src;setTimeout(next,300)};"
+    "t.onerror=function(){setTimeout(next,1000)};"
     "t.src=\'/frame?\'+Date.now();"
     "}"
-    "setTimeout(next,500);"
+    "setTimeout(next,300);"
     "})();"
     "</script></body></html>"
 )
