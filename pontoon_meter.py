@@ -90,7 +90,7 @@ def _load_bold(size):
 
 font_title  = _load_font(15  * _SS)
 font_status = _load_bold(80  * _SS)
-font_gust   = _load_bold(96  * _SS)   # larger number for the main speed readout
+font_gust   = _load_bold(72  * _SS)   # main speed number — sized to fit below the status band
 font_data   = _load_font(22  * _SS)
 font_label  = _load_font(14  * _SS)
 font_strip  = _load_font(16  * _SS)
@@ -850,7 +850,7 @@ def render_display(state, frame, needle_gust):
 
     # ── Info section ──────────────────────────────────────────────────────────
     # Full-width status band (replaces narrow centered badge)
-    band_h  = 44 * _SS   # 22 px device
+    band_h  = 36 * _SS   # 18 px device — reduced to give the number more vertical room
     band_y0 = info_y + 4 * _SS
     band_y1 = band_y0 + band_h
     _, badge_bg = _STATUS_CONFIG[msg]
@@ -896,8 +896,8 @@ def render_display(state, frame, needle_gust):
     num_y   = num_top + (_H - num_top) // 2   # center in remaining space
     d.text((grp_x + 2 * _SS,             num_y + 2 * _SS),              num_str, fill=(0, 0, 0),  font=font_gust, anchor="lm")
     d.text((grp_x,                        num_y),                        num_str, fill=gust_fill,  font=font_gust, anchor="lm")
-    d.text((grp_x + num_w + 10 * _SS,    num_y + 22 * _SS + 2 * _SS),  "mph",   fill=(0, 0, 0),  font=font_unit, anchor="lm")
-    d.text((grp_x + num_w + 8  * _SS,    num_y + 22 * _SS),             "mph",   fill=mph_fill,   font=font_unit, anchor="lm")
+    d.text((grp_x + num_w + 10 * _SS,    num_y + 16 * _SS + 2 * _SS),  "mph",   fill=(0, 0, 0),  font=font_unit, anchor="lm")
+    d.text((grp_x + num_w + 8  * _SS,    num_y + 16 * _SS),             "mph",   fill=mph_fill,   font=font_unit, anchor="lm")
 
     # Trend arrow — left margin, vertically aligned with number center
     if trend is not None:
