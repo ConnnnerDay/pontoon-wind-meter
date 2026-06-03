@@ -552,7 +552,7 @@ def _gauge_ang(mph_val):
     return math.radians(_GAUGE_ARC_START + (mph_val / GAUGE_MAX) * _GAUGE_ARC_SWEEP)
 
 
-def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind=None, history=None, wdir=None):
+def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind=None, history=None):
     """270-degree horseshoe gauge: arc opens at the bottom; needle, streaks, ticks, labels."""
     box = (cx - r, cy - r, cx + r, cy + r)
     arc_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
@@ -687,34 +687,6 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         ds = 4 * _SS
         d.polygon([(wx, wy - ds), (wx + ds, wy), (wx, wy + ds), (wx - ds, wy)],
                   fill=(45, 45, 45), outline=(145, 145, 145))
-        avg_str = f"avg {wind:.0f}"
-        if wdir and wdir != "---":
-            avg_str += f"  {wdir}"
-        d.text((cx + _SS, cy + 26 * _SS + _SS), avg_str, fill=(0, 0, 0),         font=font_data, anchor="mm")
-        d.text((cx,       cy + 26 * _SS),        avg_str, fill=(155, 155, 155), font=font_data, anchor="mm")
-
-    # Tiny gust history sparkline below avg text — oldest left, newest right
-    if history and len(history) >= 2 and not stale:
-        pts  = list(reversed(history[:6]))
-        n    = len(pts)
-        sx0, sx1 = cx - 34 * _SS, cx + 34 * _SS
-        syc  = cy + 48 * _SS
-        h_sp = 6 * _SS
-        maxv = max(max(pts) * 1.05, GOOD_MPH + 1)
-        for j in range(n - 1):
-            px0 = sx0 + j * (sx1 - sx0) // (n - 1)
-            px1 = sx0 + (j + 1) * (sx1 - sx0) // (n - 1)
-            py0 = syc - int(pts[j]     / maxv * h_sp)
-            py1 = syc - int(pts[j + 1] / maxv * h_sp)
-            v   = pts[j]
-            sc  = ((0, 95, 45) if v < GOOD_MPH
-                   else ((130, 100, 0) if v <= CAUTION_MPH else (130, 28, 28)))
-            d.line([(px0, py0), (px1, py1)], fill=sc, width=_SS)
-        last_y = syc - int(pts[-1] / maxv * h_sp)
-        dot_c  = ((0, 175, 80) if pts[-1] < GOOD_MPH
-                  else ((195, 152, 0) if pts[-1] <= CAUTION_MPH else (195, 45, 45)))
-        dr = 2 * _SS
-        d.ellipse((sx1 - dr, last_y - dr, sx1 + dr, last_y + dr), fill=dot_c)
 
     # Kite-shaped needle — soft glow arc at its angle for a back-lit instrument feel
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
@@ -820,7 +792,7 @@ def render_display(state, frame, needle_gust):
                 d.arc((cx - h_off, cy - h_off, cx + h_off, cy + h_off),
                       _GAUGE_ARC_START - 8, halo_end + 8, fill=hc, width=2 * _SS)
 
-    _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind, history=history, wdir=wdir)
+    _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind, history=history)
 
     # Data freshness bar — centered horizontal line in the gauge mouth gap
     if age is not None:
