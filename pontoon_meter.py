@@ -663,8 +663,6 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         lx, ly = cx + (r - 28 * _SS) * ca, cy + (r - 28 * _SS) * sa
         d.text((int(lx), int(ly)), lbl, fill=lbl_c, font=font_data, anchor="mm")
 
-    # Dim "GUST" label in upper-center of gauge interior — context for the needle
-    d.text((cx, cy - 50 * _SS), "GUST", fill=(48, 48, 48), font=font_label, anchor="mm")
 
     # Peak gust marker — bright tick just outside the arc at session-max position
     if history and len(history) >= 2 and not stale:
@@ -695,7 +693,9 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         ds = 4 * _SS
         d.polygon([(wx, wy - ds), (wx + ds, wy), (wx, wy + ds), (wx - ds, wy)],
                   fill=(45, 45, 45), outline=(145, 145, 145))
-        d.text((cx, cy + 26 * _SS), f"avg {wind:.0f}", fill=(155, 155, 155), font=font_data, anchor="mm")
+        avg_str = f"avg {wind:.0f}"
+        d.text((cx + _SS, cy + 26 * _SS + _SS), avg_str, fill=(0, 0, 0), font=font_data, anchor="mm")
+        d.text((cx,       cy + 26 * _SS),        avg_str, fill=(155, 155, 155), font=font_data, anchor="mm")
 
     # Tiny gust history sparkline below avg text — oldest left, newest right
     if history and len(history) >= 2 and not stale:
@@ -826,8 +826,8 @@ def render_display(state, frame, needle_gust):
 
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind, history=history)
 
-    # Compass rose inside the arc — upper-left to clear the "18" label at upper-right
-    _draw_compass(d, cx - 40 * _SS, cy - 24 * _SS, 20 * _SS, wdir)
+    # Compass rose — positioned left of center, clear of the "12"/"18" zone labels
+    _draw_compass(d, cx - 50 * _SS, cy - 12 * _SS, 18 * _SS, wdir)
 
     # Data freshness bar — centered horizontal line in the gauge mouth gap
     if age is not None:
@@ -867,13 +867,23 @@ def render_display(state, frame, needle_gust):
            font=font_unit, anchor="mm")
 
     # Secondary info row — water temp + wave height, tucked just below the band
-    ctc = tuple(max(0, int(c * 0.60)) for c in accent)
     row_y = band_y1 + 10 * _SS
-    if not stale:
+    if not stale and (wtmp is not None or wvht is not None):
+        # Dark tinted backdrop so text reads over the animated info-section background
+        d.rectangle([0, row_y - 9 * _SS, _W - 1, row_y + 9 * _SS],
+                    fill=tuple(max(0, c // 5) for c in accent))
+        # Normalize accent to ~200 peak brightness so text is always legible
+        peak_ch = max(accent) or 1
+        ctc = tuple(min(255, int(c * 200 // peak_ch)) for c in accent)
+        sh = _SS  # 1 device shadow offset
         if wtmp is not None:
-            d.text((8 * _SS, row_y), f"{wtmp:.0f}° water", fill=ctc, font=font_label, anchor="lm")
+            wt_str = f"{wtmp:.0f}° water"
+            d.text((8 * _SS + sh, row_y + sh), wt_str, fill=(0, 0, 0), font=font_label, anchor="lm")
+            d.text((8 * _SS,      row_y),       wt_str, fill=ctc,       font=font_label, anchor="lm")
         if wvht is not None:
-            d.text((_W - 8 * _SS, row_y), f"{wvht:.1f}ft waves", fill=ctc, font=font_label, anchor="rm")
+            wv_str = f"{wvht:.1f}ft waves"
+            d.text((_W - 8 * _SS + sh, row_y + sh), wv_str, fill=(0, 0, 0), font=font_label, anchor="rm")
+            d.text((_W - 8 * _SS,      row_y),       wv_str, fill=ctc,       font=font_label, anchor="rm")
 
     # Big gust number — vertically centered in remaining space below info row
     if stale:
