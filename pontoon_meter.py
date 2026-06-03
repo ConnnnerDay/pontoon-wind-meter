@@ -176,21 +176,6 @@ def _fit_text(d, text, font, max_w):
     return text[:-1] + "…"
 
 
-def _draw_status_badge(d, y, msg, frame, font=None, bh=None):
-    """Rounded-rectangle badge with a sinusoidally pulsing border."""
-    if font is None:
-        font = font_status
-    if bh is None:
-        bh = 30 * _SS
-    accent_base, bg = _STATUS_CONFIG[msg]
-    amp = 50 if msg == "TOO WINDY" else 20
-    pulse = int(amp * math.sin(frame * math.pi / (FRAME_RATE * 1.2)))
-    accent = tuple(min(255, max(0, c + pulse)) for c in accent_base)
-    text_w = d.textlength(msg, font=font)
-    bw = max(int(text_w) + 24 * _SS, 120 * _SS)
-    bx = int((_W - bw) / 2)
-    d.rounded_rectangle([bx, y, bx + bw, y + bh], radius=6 * _SS, fill=bg, outline=accent, width=2 * _SS)
-    d.text((_W // 2, y + bh // 2), msg, fill="white", font=font, anchor="mm")
 
 
 def _trend(history):
@@ -502,12 +487,15 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
         idx  = (frame // (FRAME_RATE * 5)) % len(slots)
         kind, text = slots[idx]
         r3, r9 = 3 * _SS, 9 * _SS
+        strip_max = _W - 24 * _SS   # leave room for the dot indicator on the right
         if kind == "wind":
             d.ellipse((r3, y_mid - r3, r9, y_mid + r3), fill=(55, 115, 55))
-            d.text((cx, y_mid), text, fill=(175, 195, 175), font=font_strip, anchor="mm")
+            d.text((cx, y_mid), _fit_text(d, text, font_strip, strip_max),
+                   fill=(175, 195, 175), font=font_strip, anchor="mm")
         elif kind == "marine":
             d.ellipse((r3, y_mid - r3, r9, y_mid + r3), fill=(35, 70, 115))
-            d.text((cx, y_mid), text, fill=(110, 140, 160), font=font_strip, anchor="mm")
+            d.text((cx, y_mid), _fit_text(d, text, font_strip, strip_max),
+                   fill=(110, 140, 160), font=font_strip, anchor="mm")
         else:
             _draw_marine_wave(d, frame, wave_color, y_mid)
             d.ellipse((r3, y_mid - r3, r9, y_mid + r3), outline=(72, 72, 72), width=_SS)
@@ -875,7 +863,7 @@ def render_display(state, frame, needle_gust):
     vib_x = [-1 * _SS, 0, 1 * _SS, 0][frame % 4] if msg == "TOO WINDY" and not stale else 0
     d.text((cx + vib_x, band_y0 + band_h // 2), msg,
            fill=(60, 60, 60) if stale else (255, 255, 255),
-           font=font_wide, anchor="mm")
+           font=font_unit, anchor="mm")
 
     # Big gust number — centered in the space below the band
     if stale:
