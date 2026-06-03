@@ -90,7 +90,7 @@ def _load_bold(size):
 
 font_title  = _load_font(15  * _SS)
 font_status = _load_bold(80  * _SS)
-font_gust   = _load_bold(96  * _SS)   # larger number for the main speed readout
+font_gust   = _load_bold(72  * _SS)   # main speed number — sized to fit below the status band
 font_data   = _load_font(22  * _SS)
 font_label  = _load_font(14  * _SS)
 font_strip  = _load_font(16  * _SS)
@@ -617,13 +617,17 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
             za_s, za_e, zc = CAUTION_ARC_END, arc_end, _RED
         d.arc(box, za_s, za_e, fill=_dim(zc, zp), width=26 * _SS)
 
-    # Bright narrow trace from 0 to current needle — highlights the swept arc
+    # Bright narrow trace from 0 to current needle — each segment stays its zone color
     if needle_gust > 0.1 and not stale:
-        na_end  = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
-        trace_c = ((0, 220, 100) if needle_gust < GOOD_MPH
-                   else ((255, 210, 0) if needle_gust <= CAUTION_MPH
-                         else (255, 80, 80)))
-        d.arc(box, _GAUGE_ARC_START, na_end, fill=trace_c, width=4 * _SS)
+        na_end = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
+        if na_end > _GAUGE_ARC_START:
+            d.arc(box, _GAUGE_ARC_START, min(na_end, GOOD_ARC_END),
+                  fill=(0, 220, 100), width=4 * _SS)
+        if na_end > GOOD_ARC_END:
+            d.arc(box, GOOD_ARC_END, min(na_end, CAUTION_ARC_END),
+                  fill=(255, 210, 0), width=4 * _SS)
+        if na_end > CAUTION_ARC_END:
+            d.arc(box, CAUTION_ARC_END, na_end, fill=(255, 80, 80), width=4 * _SS)
 
     # Animated wind streaks flowing inside the arc face
     _draw_wind_streaks(d, cx, cy, r, actual_gust, frame)
@@ -653,18 +657,6 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         d.line([(int(x1), int(y1)), (int(x2), int(y2))],
                fill=tick_c, width=2 * _SS if is_major else _SS)
 
-    # Zone-boundary labels — tinted to match the zone they mark
-    for mph_val, lbl, lbl_c in [
-        (GOOD_MPH,    str(GOOD_MPH),    _dim(_GREEN,  dim * 0.75)),
-        (CAUTION_MPH, str(CAUTION_MPH), _dim(_YELLOW, dim * 0.75)),
-    ]:
-        ang = _gauge_ang(mph_val)
-        ca, sa = math.cos(ang), math.sin(ang)
-        lx, ly = cx + (r - 28 * _SS) * ca, cy + (r - 28 * _SS) * sa
-        d.text((int(lx), int(ly)), lbl, fill=lbl_c, font=font_data, anchor="mm")
-
-    # Dim "GUST" label in upper-center of gauge interior — context for the needle
-    d.text((cx, cy - 50 * _SS), "GUST", fill=(48, 48, 48), font=font_label, anchor="mm")
 
     # Peak gust marker — bright tick just outside the arc at session-max position
     if history and len(history) >= 2 and not stale:
@@ -695,30 +687,6 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         ds = 4 * _SS
         d.polygon([(wx, wy - ds), (wx + ds, wy), (wx, wy + ds), (wx - ds, wy)],
                   fill=(45, 45, 45), outline=(145, 145, 145))
-        d.text((cx, cy + 26 * _SS), f"avg {wind:.0f}", fill=(155, 155, 155), font=font_data, anchor="mm")
-
-    # Tiny gust history sparkline below avg text — oldest left, newest right
-    if history and len(history) >= 2 and not stale:
-        pts  = list(reversed(history[:6]))
-        n    = len(pts)
-        sx0, sx1 = cx - 34 * _SS, cx + 34 * _SS
-        syc  = cy + 48 * _SS
-        h_sp = 6 * _SS
-        maxv = max(max(pts) * 1.05, GOOD_MPH + 1)
-        for j in range(n - 1):
-            px0 = sx0 + j * (sx1 - sx0) // (n - 1)
-            px1 = sx0 + (j + 1) * (sx1 - sx0) // (n - 1)
-            py0 = syc - int(pts[j]     / maxv * h_sp)
-            py1 = syc - int(pts[j + 1] / maxv * h_sp)
-            v   = pts[j]
-            sc  = ((0, 95, 45) if v < GOOD_MPH
-                   else ((130, 100, 0) if v <= CAUTION_MPH else (130, 28, 28)))
-            d.line([(px0, py0), (px1, py1)], fill=sc, width=_SS)
-        last_y = syc - int(pts[-1] / maxv * h_sp)
-        dot_c  = ((0, 175, 80) if pts[-1] < GOOD_MPH
-                  else ((195, 152, 0) if pts[-1] <= CAUTION_MPH else (195, 45, 45)))
-        dr = 2 * _SS
-        d.ellipse((sx1 - dr, last_y - dr, sx1 + dr, last_y + dr), fill=dot_c)
 
     # Kite-shaped needle — soft glow arc at its angle for a back-lit instrument feel
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
@@ -826,9 +794,6 @@ def render_display(state, frame, needle_gust):
 
     _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind, history=history)
 
-    # Compass rose inside the arc — upper-left to clear the "18" label at upper-right
-    _draw_compass(d, cx - 40 * _SS, cy - 24 * _SS, 20 * _SS, wdir)
-
     # Data freshness bar — centered horizontal line in the gauge mouth gap
     if age is not None:
         freshness = max(0.0, 1.0 - age / STALE_MINUTES)
@@ -850,7 +815,7 @@ def render_display(state, frame, needle_gust):
 
     # ── Info section ──────────────────────────────────────────────────────────
     # Full-width status band (replaces narrow centered badge)
-    band_h  = 44 * _SS   # 22 px device
+    band_h  = 36 * _SS   # 18 px device — reduced to give the number more vertical room
     band_y0 = info_y + 4 * _SS
     band_y1 = band_y0 + band_h
     _, badge_bg = _STATUS_CONFIG[msg]
@@ -867,13 +832,23 @@ def render_display(state, frame, needle_gust):
            font=font_unit, anchor="mm")
 
     # Secondary info row — water temp + wave height, tucked just below the band
-    ctc = tuple(max(0, int(c * 0.60)) for c in accent)
     row_y = band_y1 + 10 * _SS
-    if not stale:
+    if not stale and (wtmp is not None or wvht is not None):
+        # Dark tinted backdrop so text reads over the animated info-section background
+        d.rectangle([0, row_y - 9 * _SS, _W - 1, row_y + 9 * _SS],
+                    fill=tuple(max(0, c // 5) for c in accent))
+        # Normalize accent to ~200 peak brightness so text is always legible
+        peak_ch = max(accent) or 1
+        ctc = tuple(min(255, int(c * 200 // peak_ch)) for c in accent)
+        sh = _SS  # 1 device shadow offset
         if wtmp is not None:
-            d.text((8 * _SS, row_y), f"{wtmp:.0f}° water", fill=ctc, font=font_label, anchor="lm")
+            wt_str = f"{wtmp:.0f}° water"
+            d.text((8 * _SS + sh, row_y + sh), wt_str, fill=(0, 0, 0), font=font_label, anchor="lm")
+            d.text((8 * _SS,      row_y),       wt_str, fill=ctc,       font=font_label, anchor="lm")
         if wvht is not None:
-            d.text((_W - 8 * _SS, row_y), f"{wvht:.1f}ft waves", fill=ctc, font=font_label, anchor="rm")
+            wv_str = f"{wvht:.1f}ft waves"
+            d.text((_W - 8 * _SS + sh, row_y + sh), wv_str, fill=(0, 0, 0), font=font_label, anchor="rm")
+            d.text((_W - 8 * _SS,      row_y),       wv_str, fill=ctc,       font=font_label, anchor="rm")
 
     # Big gust number — vertically centered in remaining space below info row
     if stale:
@@ -896,8 +871,8 @@ def render_display(state, frame, needle_gust):
     num_y   = num_top + (_H - num_top) // 2   # center in remaining space
     d.text((grp_x + 2 * _SS,             num_y + 2 * _SS),              num_str, fill=(0, 0, 0),  font=font_gust, anchor="lm")
     d.text((grp_x,                        num_y),                        num_str, fill=gust_fill,  font=font_gust, anchor="lm")
-    d.text((grp_x + num_w + 10 * _SS,    num_y + 22 * _SS + 2 * _SS),  "mph",   fill=(0, 0, 0),  font=font_unit, anchor="lm")
-    d.text((grp_x + num_w + 8  * _SS,    num_y + 22 * _SS),             "mph",   fill=mph_fill,   font=font_unit, anchor="lm")
+    d.text((grp_x + num_w + 10 * _SS,    num_y + 16 * _SS + 2 * _SS),  "mph",   fill=(0, 0, 0),  font=font_unit, anchor="lm")
+    d.text((grp_x + num_w + 8  * _SS,    num_y + 16 * _SS),             "mph",   fill=mph_fill,   font=font_unit, anchor="lm")
 
     # Trend arrow — left margin, vertically aligned with number center
     if trend is not None:
