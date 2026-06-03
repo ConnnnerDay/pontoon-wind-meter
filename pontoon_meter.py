@@ -617,13 +617,17 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
             za_s, za_e, zc = CAUTION_ARC_END, arc_end, _RED
         d.arc(box, za_s, za_e, fill=_dim(zc, zp), width=26 * _SS)
 
-    # Bright narrow trace from 0 to current needle — highlights the swept arc
+    # Bright narrow trace from 0 to current needle — each segment stays its zone color
     if needle_gust > 0.1 and not stale:
-        na_end  = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
-        trace_c = ((0, 220, 100) if needle_gust < GOOD_MPH
-                   else ((255, 210, 0) if needle_gust <= CAUTION_MPH
-                         else (255, 80, 80)))
-        d.arc(box, _GAUGE_ARC_START, na_end, fill=trace_c, width=4 * _SS)
+        na_end = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
+        if na_end > _GAUGE_ARC_START:
+            d.arc(box, _GAUGE_ARC_START, min(na_end, GOOD_ARC_END),
+                  fill=(0, 220, 100), width=4 * _SS)
+        if na_end > GOOD_ARC_END:
+            d.arc(box, GOOD_ARC_END, min(na_end, CAUTION_ARC_END),
+                  fill=(255, 210, 0), width=4 * _SS)
+        if na_end > CAUTION_ARC_END:
+            d.arc(box, CAUTION_ARC_END, na_end, fill=(255, 80, 80), width=4 * _SS)
 
     # Animated wind streaks flowing inside the arc face
     _draw_wind_streaks(d, cx, cy, r, actual_gust, frame)
@@ -652,16 +656,6 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
                 tick_c = tuple(min(255, int(c + 110 * prox)) for c in tick_c)
         d.line([(int(x1), int(y1)), (int(x2), int(y2))],
                fill=tick_c, width=2 * _SS if is_major else _SS)
-
-    # Zone-boundary labels — tinted to match the zone they mark
-    for mph_val, lbl, lbl_c in [
-        (GOOD_MPH,    str(GOOD_MPH),    _dim(_GREEN,  dim * 0.75)),
-        (CAUTION_MPH, str(CAUTION_MPH), _dim(_YELLOW, dim * 0.75)),
-    ]:
-        ang = _gauge_ang(mph_val)
-        ca, sa = math.cos(ang), math.sin(ang)
-        lx, ly = cx + (r - 28 * _SS) * ca, cy + (r - 28 * _SS) * sa
-        d.text((int(lx), int(ly)), lbl, fill=lbl_c, font=font_data, anchor="mm")
 
 
     # Peak gust marker — bright tick just outside the arc at session-max position
