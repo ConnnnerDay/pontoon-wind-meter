@@ -57,19 +57,26 @@ _ALERT_COLORS = {
     "Unknown":  _YELLOW,
 }
 
-# Font loading — find the first usable TrueType font once
+# Font loading — bundled fonts ship in assets/ so the Pi always has them
+_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 _FONT_CANDIDATES = [
+    os.path.join(_ASSETS_DIR, "DejaVuSans.ttf"),          # bundled — always first
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
 ]
 _BOLD_CANDIDATES = [
+    os.path.join(_ASSETS_DIR, "DejaVuSans-Bold.ttf"),     # bundled — always first
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
     "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
 ]
 _FONT_PATH = next((p for p in _FONT_CANDIDATES if os.path.exists(p)), None)
 _BOLD_PATH = next((p for p in _BOLD_CANDIDATES if os.path.exists(p)), _FONT_PATH)
+if _FONT_PATH:
+    logging.info("Using font: %s", _FONT_PATH)
+else:
+    logging.warning("No TrueType font found — text will render as tiny bitmap fallback")
 
 def _load_font(size):
     if _FONT_PATH:
