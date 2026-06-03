@@ -39,14 +39,14 @@ GOOD_ARC_END    = round(_GAUGE_ARC_START + (GOOD_MPH    / GAUGE_MAX) * _GAUGE_AR
 CAUTION_ARC_END = round(_GAUGE_ARC_START + (CAUTION_MPH / GAUGE_MAX) * _GAUGE_ARC_SWEEP)
 
 # Colors
-_GREEN  = (0, 160, 70)
-_YELLOW = (210, 165, 0)
-_RED    = (210, 40, 40)
+_GREEN  = (0, 210, 85)
+_YELLOW = (235, 190, 0)
+_RED    = (235, 65, 55)
 
 _STATUS_CONFIG = {
-    "GOOD":      (_GREEN,  (0, 55, 22)),
-    "CAUTION":   (_YELLOW, (65, 52, 0)),
-    "TOO WINDY": (_RED,    (70, 12, 12)),
+    "GOOD":      (_GREEN,  (0, 80, 32)),
+    "CAUTION":   (_YELLOW, (90, 72, 0)),
+    "TOO WINDY": (_RED,    (95, 20, 16)),
 }
 
 _ALERT_COLORS = {
@@ -852,67 +852,50 @@ def render_display(state, frame, needle_gust):
             d.line([(_W // 2 - cx + sx0, info_y - 5 * _SS), (_W // 2 + cx - sx0, info_y - 5 * _SS)],
                    fill=tuple(v // 2 for v in sc_), width=_SS)
 
-    # Weather icon — GIF frames if available, procedural fallback; drawn before
-    # badge so badge text always renders on top of the icon
-    icon_x = _W - _GIF_ICON_SIZE * _SS              # right-edge aligned
-    icon_y = info_y + 3 * _SS
-    if msg in _GIF_ICONS:
-        gif_frame = _GIF_ICONS[msg][frame % len(_GIF_ICONS[msg])]
-        if stale:
-            rc, gc, bc, ac = gif_frame.split()
-            gv = rc.point(lambda x: int(x * 0.35))
-            gif_frame = Image.merge("RGBA", (gv, gv, gv, ac))
-        img.paste(gif_frame, (icon_x, icon_y), gif_frame)
-    else:
-        _draw_weather_icon(d, _W - 20 * _SS, info_y + 23 * _SS, msg, frame, r=12 * _SS)
-
-    # Row 1 — status word, pulsing fill for urgent states; grey when stale
-    status_font = (font_huge if msg == "GOOD"
-                   else font_wide if msg == "TOO WINDY"
-                   else font_big)
-    text_fill = (55, 55, 55) if stale else (255, 255, 255)
-    # Dark badge behind status word — layered outer glow then filled rect
+    # ── Info section ──────────────────────────────────────────────────────────
+    # Full-width status band (replaces narrow centered badge)
+    band_h  = 44 * _SS   # 22 px device
+    band_y0 = info_y + 4 * _SS
+    band_y1 = band_y0 + band_h
     _, badge_bg = _STATUS_CONFIG[msg]
-    if not stale and any(c > 0 for c in badge_bg):
-        tw  = int(d.textlength(msg, font=status_font))
-        bx0 = cx - tw // 2 - 10 * _SS
-        bx1 = cx + tw // 2 + 10 * _SS
-        by0, by1 = info_y + 1 * _SS, info_y + 46 * _SS
-        gp = 0.35 + 0.65 * abs(math.sin(frame * math.pi / (FRAME_RATE * 1.5)))
-        for gw, gfac in ((3 * _SS, 0.14), (1 * _SS, 0.38)):
-            gc = tuple(min(255, int(c * gp * gfac)) for c in accent)
-            d.rounded_rectangle([bx0 - gw, by0 - gw, bx1 + gw, by1 + gw],
-                                radius=6 * _SS + gw, outline=gc, width=_SS)
-        d.rounded_rectangle([bx0, by0, bx1, by1], radius=6 * _SS, fill=badge_bg)
+    band_bg = badge_bg if stale else tuple(min(255, int(c * 0.55)) for c in accent)
+    d.rectangle([0, band_y0, _W - 1, band_y1], fill=band_bg)
+    # Bright top/bottom edges on the band
+    edge_p  = 0.5 + 0.5 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.0)))
+    edge_c  = tuple(min(255, int(c * edge_p)) for c in accent) if not stale else (55, 55, 55)
+    d.line([(0, band_y0), (_W - 1, band_y0)], fill=edge_c, width=2 * _SS)
+    d.line([(0, band_y1), (_W - 1, band_y1)], fill=tuple(c // 2 for c in edge_c), width=_SS)
     vib_x = [-1 * _SS, 0, 1 * _SS, 0][frame % 4] if msg == "TOO WINDY" and not stale else 0
-    d.text((cx + 1 * _SS,  info_y + 22 * _SS), msg, fill=(0, 0, 0), font=status_font, anchor="mm")
-    d.text((cx + vib_x,    info_y + 21 * _SS), msg, fill=text_fill,  font=status_font, anchor="mm")
+    d.text((cx + vib_x, band_y0 + band_h // 2), msg,
+           fill=(60, 60, 60) if stale else (255, 255, 255),
+           font=font_wide, anchor="mm")
 
-    # Row 2 — big gust number + "mph" unit; grey when stale
+    # Big gust number — centered in the space below the band
     if stale:
         gust_fill = (50, 50, 50)
         mph_fill  = (40, 40, 40)
     elif needle_gust > CAUTION_MPH:
-        gust_fill = (255, 100, 80)
-        mph_fill  = (200, 70, 55)
+        gust_fill = (255, 110, 90)
+        mph_fill  = (210, 85, 70)
     elif needle_gust >= GOOD_MPH:
         gust_fill = (255, 215, 50)
-        mph_fill  = (200, 165, 30)
+        mph_fill  = (205, 170, 35)
     else:
-        gust_fill = (235, 235, 235)
-        mph_fill  = (175, 175, 175)
+        gust_fill = (240, 240, 240)
+        mph_fill  = (180, 180, 180)
     num_str = f"{needle_gust:.0f}"
     num_w   = int(d.textlength(num_str, font=font_status))
     unit_w  = int(d.textlength("mph",   font=font_unit))
     grp_x   = (_W - num_w - 8 * _SS - unit_w) // 2
-    d.text((grp_x + 2 * _SS,               info_y + 85 * _SS),              num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
-    d.text((grp_x,                         info_y + 83 * _SS),              num_str, fill=gust_fill,  font=font_status, anchor="lm")
-    d.text((grp_x + num_w + 10 * _SS,      info_y + 83 * _SS + 13 * _SS),  "mph",   fill=(0, 0, 0),  font=font_unit,   anchor="lm")
-    d.text((grp_x + num_w + 8  * _SS,      info_y + 83 * _SS + 11 * _SS),  "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
+    num_y   = band_y1 + (_H - band_y1) // 2   # vertically center in remaining space
+    d.text((grp_x + 2 * _SS,             num_y + 2 * _SS),              num_str, fill=(0, 0, 0),  font=font_status, anchor="mm")
+    d.text((grp_x,                        num_y),                        num_str, fill=gust_fill,  font=font_status, anchor="mm")
+    d.text((grp_x + num_w + 10 * _SS,    num_y + 20 * _SS + 2 * _SS),  "mph",   fill=(0, 0, 0),  font=font_unit,   anchor="mm")
+    d.text((grp_x + num_w + 8  * _SS,    num_y + 20 * _SS),             "mph",   fill=mph_fill,   font=font_unit,   anchor="mm")
 
-    # Trend arrow at left margin, below badge — left side keeps it clear of "mph"
+    # Trend arrow — left of number group
     if trend is not None:
-        _draw_trend(d, 18 * _SS, info_y + 63 * _SS, trend)
+        _draw_trend(d, 18 * _SS, num_y - 12 * _SS, trend)
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     dir_tag  = f"  {wdir}" if wdir else ""
