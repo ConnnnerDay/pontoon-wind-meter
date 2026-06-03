@@ -588,27 +588,36 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
 
     dim = 0.30 if stale else 1.0
 
+    # Per-zone brightness: active zone full, inactive zones dimmed to 35%
+    if stale:
+        gd = yd = rd = 0.30
+    elif needle_gust < GOOD_MPH:
+        gd, yd, rd = dim, dim * 0.35, dim * 0.35
+    elif needle_gust <= CAUTION_MPH:
+        gd, yd, rd = dim * 0.35, dim, dim * 0.35
+    else:
+        gd, yd, rd = dim * 0.35, dim * 0.35, dim
+
     # Soft ambient glow behind zone arcs — wider dim pre-pass for depth
-    glow_dim = dim * 0.22
-    d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,    fill=_dim(_GREEN,  glow_dim), width=26 * _SS)
-    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END,  fill=_dim(_YELLOW, glow_dim), width=26 * _SS)
-    d.arc(box, CAUTION_ARC_END, arc_end,           fill=_dim(_RED,    glow_dim), width=26 * _SS)
+    d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,   fill=_dim(_GREEN,  gd * 0.22), width=26 * _SS)
+    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END, fill=_dim(_YELLOW, yd * 0.22), width=26 * _SS)
+    d.arc(box, CAUTION_ARC_END, arc_end,         fill=_dim(_RED,    rd * 0.22), width=26 * _SS)
 
     # Colored zone arcs
-    d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,    fill=_dim(_GREEN,  dim), width=16 * _SS)
-    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END,  fill=_dim(_YELLOW, dim), width=16 * _SS)
-    d.arc(box, CAUTION_ARC_END, arc_end,          fill=_dim(_RED,    dim), width=16 * _SS)
+    d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,   fill=_dim(_GREEN,  gd), width=16 * _SS)
+    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END, fill=_dim(_YELLOW, yd), width=16 * _SS)
+    d.arc(box, CAUTION_ARC_END, arc_end,         fill=_dim(_RED,    rd), width=16 * _SS)
 
     # Thin specular highlight at the inner edge of each arc band — adds depth
     ih   = r - 8 * _SS
     ibox = (cx - ih, cy - ih, cx + ih, cy + ih)
-    d.arc(ibox, _GAUGE_ARC_START, GOOD_ARC_END,   fill=_dim(_GREEN,  dim * 0.55), width=2 * _SS)
-    d.arc(ibox, GOOD_ARC_END,    CAUTION_ARC_END, fill=_dim(_YELLOW, dim * 0.55), width=2 * _SS)
-    d.arc(ibox, CAUTION_ARC_END, arc_end,         fill=_dim(_RED,    dim * 0.55), width=2 * _SS)
+    d.arc(ibox, _GAUGE_ARC_START, GOOD_ARC_END,   fill=_dim(_GREEN,  gd * 0.55), width=2 * _SS)
+    d.arc(ibox, GOOD_ARC_END,    CAUTION_ARC_END, fill=_dim(_YELLOW, yd * 0.55), width=2 * _SS)
+    d.arc(ibox, CAUTION_ARC_END, arc_end,         fill=_dim(_RED,    rd * 0.55), width=2 * _SS)
 
-    # Pulsing overlay on the currently-active zone arc — breathes to indicate live zone
+    # Pulsing brightness boost on the active zone — breathes to confirm live data
     if not stale:
-        zp = 0.12 + 0.10 * math.sin(frame * math.pi / (FRAME_RATE * 1.8))
+        zp = 0.30 + 0.20 * abs(math.sin(frame * math.pi / (FRAME_RATE * 1.8)))
         if needle_gust < GOOD_MPH:
             za_s, za_e, zc = _GAUGE_ARC_START, GOOD_ARC_END, _GREEN
         elif needle_gust <= CAUTION_MPH:
