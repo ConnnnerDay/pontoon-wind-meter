@@ -90,6 +90,7 @@ def _load_bold(size):
 
 font_title  = _load_font(15  * _SS)
 font_status = _load_bold(80  * _SS)
+font_gust   = _load_bold(96  * _SS)   # larger number for the main speed readout
 font_data   = _load_font(22  * _SS)
 font_label  = _load_font(14  * _SS)
 font_strip  = _load_font(16  * _SS)
@@ -800,7 +801,7 @@ def render_display(state, frame, needle_gust):
     trend = _trend(history)
 
     img, d = make_image()
-    r  = 80 * _SS
+    r  = 70 * _SS
     # Advisory strip occupies y=0-18; gauge starts 14px below that
     cy = (18 + 14) * _SS + r + 11 * _SS
     cx = _W // 2
@@ -865,7 +866,16 @@ def render_display(state, frame, needle_gust):
            fill=(60, 60, 60) if stale else (255, 255, 255),
            font=font_unit, anchor="mm")
 
-    # Big gust number — centered in the space below the band
+    # Secondary info row — water temp + wave height, tucked just below the band
+    ctc = tuple(max(0, int(c * 0.60)) for c in accent)
+    row_y = band_y1 + 10 * _SS
+    if not stale:
+        if wtmp is not None:
+            d.text((8 * _SS, row_y), f"{wtmp:.0f}° water", fill=ctc, font=font_label, anchor="lm")
+        if wvht is not None:
+            d.text((_W - 8 * _SS, row_y), f"{wvht:.1f}ft waves", fill=ctc, font=font_label, anchor="rm")
+
+    # Big gust number — vertically centered in remaining space below info row
     if stale:
         gust_fill = (50, 50, 50)
         mph_fill  = (40, 40, 40)
@@ -879,16 +889,17 @@ def render_display(state, frame, needle_gust):
         gust_fill = (240, 240, 240)
         mph_fill  = (180, 180, 180)
     num_str = f"{needle_gust:.0f}"
-    num_w   = int(d.textlength(num_str, font=font_status))
+    num_w   = int(d.textlength(num_str, font=font_gust))
     unit_w  = int(d.textlength("mph",   font=font_unit))
     grp_x   = (_W - num_w - 8 * _SS - unit_w) // 2
-    num_y   = band_y1 + (_H - band_y1) // 2   # vertically center in remaining space
-    d.text((grp_x + 2 * _SS,             num_y + 2 * _SS),              num_str, fill=(0, 0, 0),  font=font_status, anchor="mm")
-    d.text((grp_x,                        num_y),                        num_str, fill=gust_fill,  font=font_status, anchor="mm")
-    d.text((grp_x + num_w + 10 * _SS,    num_y + 20 * _SS + 2 * _SS),  "mph",   fill=(0, 0, 0),  font=font_unit,   anchor="mm")
-    d.text((grp_x + num_w + 8  * _SS,    num_y + 20 * _SS),             "mph",   fill=mph_fill,   font=font_unit,   anchor="mm")
+    num_top = row_y + 20 * _SS   # start below the info row
+    num_y   = num_top + (_H - num_top) // 2   # center in remaining space
+    d.text((grp_x + 2 * _SS,             num_y + 2 * _SS),              num_str, fill=(0, 0, 0),  font=font_gust, anchor="lm")
+    d.text((grp_x,                        num_y),                        num_str, fill=gust_fill,  font=font_gust, anchor="lm")
+    d.text((grp_x + num_w + 10 * _SS,    num_y + 22 * _SS + 2 * _SS),  "mph",   fill=(0, 0, 0),  font=font_unit, anchor="lm")
+    d.text((grp_x + num_w + 8  * _SS,    num_y + 22 * _SS),             "mph",   fill=mph_fill,   font=font_unit, anchor="lm")
 
-    # Trend arrow — left of number group
+    # Trend arrow — left margin, vertically aligned with number center
     if trend is not None:
         _draw_trend(d, 18 * _SS, num_y - 12 * _SS, trend)
 
@@ -926,13 +937,6 @@ def render_display(state, frame, needle_gust):
     if bwave_row2:
         d.line(bwave_row2, fill=accent_dim2)
 
-    # Dim accent-tinted corner data: water temp (bottom-left), wave height (bottom-right)
-    if not stale:
-        ctc = tuple(max(0, int(c * 0.45)) for c in accent)
-        if wtmp is not None:
-            d.text((6 * _SS, _H - 16 * _SS), f"{wtmp:.0f}°", fill=ctc, font=font_data, anchor="lm")
-        if wvht is not None:
-            d.text((_W - 6 * _SS, _H - 16 * _SS), f"{wvht:.1f}ft", fill=ctc, font=font_data, anchor="rm")
 
     # Top strip: NOAA advisories → wind → marine → clock/wave
     _draw_alert_strip(d, alerts, frame, accent, y0=0,
