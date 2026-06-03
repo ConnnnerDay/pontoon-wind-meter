@@ -552,7 +552,7 @@ def _gauge_ang(mph_val):
     return math.radians(_GAUGE_ARC_START + (mph_val / GAUGE_MAX) * _GAUGE_ARC_SWEEP)
 
 
-def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind=None, history=None):
+def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind=None, history=None, wdir=None):
     """270-degree horseshoe gauge: arc opens at the bottom; needle, streaks, ticks, labels."""
     box = (cx - r, cy - r, cx + r, cy + r)
     arc_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
@@ -694,7 +694,9 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         d.polygon([(wx, wy - ds), (wx + ds, wy), (wx, wy + ds), (wx - ds, wy)],
                   fill=(45, 45, 45), outline=(145, 145, 145))
         avg_str = f"avg {wind:.0f}"
-        d.text((cx + _SS, cy + 26 * _SS + _SS), avg_str, fill=(0, 0, 0), font=font_data, anchor="mm")
+        if wdir and wdir != "---":
+            avg_str += f"  {wdir}"
+        d.text((cx + _SS, cy + 26 * _SS + _SS), avg_str, fill=(0, 0, 0),         font=font_data, anchor="mm")
         d.text((cx,       cy + 26 * _SS),        avg_str, fill=(155, 155, 155), font=font_data, anchor="mm")
 
     # Tiny gust history sparkline below avg text — oldest left, newest right
@@ -824,10 +826,7 @@ def render_display(state, frame, needle_gust):
                 d.arc((cx - h_off, cy - h_off, cx + h_off, cy + h_off),
                       _GAUGE_ARC_START - 8, halo_end + 8, fill=hc, width=2 * _SS)
 
-    _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind, history=history)
-
-    # Compass rose — positioned left of center, clear of the "12"/"18" zone labels
-    _draw_compass(d, cx - 50 * _SS, cy - 12 * _SS, 18 * _SS, wdir)
+    _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind, history=history, wdir=wdir)
 
     # Data freshness bar — centered horizontal line in the gauge mouth gap
     if age is not None:
