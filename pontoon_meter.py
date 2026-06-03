@@ -883,10 +883,10 @@ def render_display(state, frame, needle_gust):
     unit_w  = int(d.textlength("mph",   font=font_unit))
     grp_x   = (_W - num_w - 8 * _SS - unit_w) // 2
     num_y   = band_y1 + (_H - band_y1) // 2   # vertically center in remaining space
-    d.text((grp_x + 2 * _SS,             num_y + 2 * _SS),              num_str, fill=(0, 0, 0),  font=font_status, anchor="mm")
-    d.text((grp_x,                        num_y),                        num_str, fill=gust_fill,  font=font_status, anchor="mm")
-    d.text((grp_x + num_w + 10 * _SS,    num_y + 20 * _SS + 2 * _SS),  "mph",   fill=(0, 0, 0),  font=font_unit,   anchor="mm")
-    d.text((grp_x + num_w + 8  * _SS,    num_y + 20 * _SS),             "mph",   fill=mph_fill,   font=font_unit,   anchor="mm")
+    d.text((grp_x + 2 * _SS,             num_y + 2 * _SS),              num_str, fill=(0, 0, 0),  font=font_status, anchor="lm")
+    d.text((grp_x,                        num_y),                        num_str, fill=gust_fill,  font=font_status, anchor="lm")
+    d.text((grp_x + num_w + 10 * _SS,    num_y + 20 * _SS + 2 * _SS),  "mph",   fill=(0, 0, 0),  font=font_unit,   anchor="lm")
+    d.text((grp_x + num_w + 8  * _SS,    num_y + 20 * _SS),             "mph",   fill=mph_fill,   font=font_unit,   anchor="lm")
 
     # Trend arrow — left of number group
     if trend is not None:
