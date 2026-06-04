@@ -28,7 +28,7 @@ GAUGE_MAX       = 25    # mph, full-scale
 GOOD_MPH        = 12
 CAUTION_MPH     = 18
 STALE_MINUTES   = 90
-_SS             = 2     # supersampling scale — render at 2× then LANCZOS to device
+_SS             = 2     # supersampling scale — render at 2× then BILINEAR downsample to device
 
 # Gauge arc geometry — horseshoe opening at the bottom (PIL degrees)
 _GAUGE_ARC_START = 135   # lower-left (0 mph)
@@ -56,6 +56,17 @@ _ALERT_COLORS = {
     "Minor":    _YELLOW,
     "Unknown":  _YELLOW,
 }
+
+# Compass direction → degrees (meteorological: direction wind comes FROM)
+_COMPASS_DEGREES = {
+    "N": 0, "NE": 45, "E": 90, "SE": 135,
+    "S": 180, "SW": 225, "W": 270, "NW": 315,
+}
+
+# TOO WINDY info-section streak geometry — constant per streak, no per-frame allocation
+_WINDY_BXS = [8,  52,  96, 140, 184, 228,  30,  74]
+_WINDY_LNS = [22, 28,  20,  26,  24,  18,  32,  16]
+_WINDY_SPD = [5,   7,   4,   6,   5,   8,   6,   3]
 
 # Font loading — bundled fonts ship in assets/ so the Pi always has them
 _ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
@@ -89,15 +100,12 @@ def _load_bold(size):
     return _load_font(size)
 
 font_title  = _load_font(15  * _SS)
-font_status = _load_bold(80  * _SS)
 font_gust   = _load_bold(72  * _SS)   # main speed number — sized to fit below the status band
 font_data   = _load_font(22  * _SS)
 font_label  = _load_font(14  * _SS)
 font_strip  = _load_font(16  * _SS)
 font_unit   = _load_bold(36  * _SS)
 font_big    = _load_bold(64  * _SS)
-font_wide   = _load_bold(48  * _SS)
-font_huge   = _load_bold(80  * _SS)
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -152,7 +160,7 @@ def _show(img):
     _show_counter[0] += 1
     if _show_counter[0] % 2 == 0:
         buf = io.BytesIO()
-        out.save(buf, format="PNG")
+        out.save(buf, format="PNG", compress_level=1)
         with _frame_lock:
             _frame_store[0] = buf.getvalue()
     device.display(out)
@@ -194,9 +202,9 @@ def _draw_trend(d, cx, y, trend):
     h = 24 * _SS
     w = 10 * _SS
     if trend == "up":
-        d.polygon([(cx, y), (cx - w, y + h), (cx + w, y + h)], fill=(240, 130, 0))
+        d.polygon([(cx, y), (cx - w, y + h), (cx + w, y + h)], fill=(255, 150, 0))
     elif trend == "down":
-        d.polygon([(cx, y + h), (cx - w, y), (cx + w, y)], fill=(0, 145, 200))
+        d.polygon([(cx, y + h), (cx - w, y), (cx + w, y)], fill=(30, 165, 225))
     else:
         d.line([(cx - 11 * _SS, y + h // 2), (cx + 11 * _SS, y + h // 2)],
                fill=(85, 85, 85), width=4 * _SS)
@@ -205,9 +213,6 @@ def _draw_trend(d, cx, y, trend):
 
 def _draw_compass(d, cx, cy, r, wdir_str):
     """Compact compass rose: dim circle, N tick, and a filled directional arrow."""
-    _dir_deg = {"N": 0, "NE": 45, "E": 90, "SE": 135,
-                "S": 180, "SW": 225, "W": 270, "NW": 315}
-
     d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(70, 70, 70), width=_SS)
     # North tick — tiny mark at the top of the circle
     d.line([(cx, cy - r + _SS), (cx, cy - r + 4 * _SS)], fill=(100, 100, 100), width=_SS)
@@ -217,7 +222,7 @@ def _draw_compass(d, cx, cy, r, wdir_str):
         d.point((int(cx + (r - 1) * math.sin(cr)), int(cy - (r - 1) * math.cos(cr))),
                 fill=(62, 62, 62))
 
-    deg = _dir_deg.get(wdir_str)
+    deg = _COMPASS_DEGREES.get(wdir_str)
     if deg is None:
         d.text((cx, cy), "?", fill=(50, 50, 50), font=font_label, anchor="mm")
         return
@@ -257,7 +262,7 @@ def _draw_wind_streaks(d, cx, cy, r, gust, frame):
         phase = ((frame // speed + i * (100 // n)) % 100) / 100.0
         ang   = math.pi * (1 - phase)
         ca, sa = math.cos(ang), math.sin(ang)
-        bright = int(60 + 160 * math.sin(phase * math.pi))   # brighter: 60–220
+        bright = int(70 + 170 * math.sin(phase * math.pi))   # brighter: 70–240
         perp = ang + math.pi / 2
         cp, sp = math.cos(perp), math.sin(perp)
         hw = 5 * _SS
@@ -355,18 +360,21 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
     if status == "GOOD":
         scroll = (frame * 2) % (80 * _SS)
         for i, (wy_off, wc, wl_i, amp_i) in enumerate([
-            (10,  (0,  99, 64), 70, 3),
-            (30,  (0,  86, 56), 90, 5),
-            (52,  (0,  74, 48), 80, 4),
-            (74,  (0,  61, 40), 65, 3),
-            (96,  (0,  48, 32), 80, 4),
-            (118, (0,  35, 24), 95, 5),
+            (10,  (0, 108, 70), 70, 3),
+            (30,  (0,  93, 61), 90, 5),
+            (52,  (0,  80, 52), 80, 4),
+            (74,  (0,  66, 43), 65, 3),
+            (96,  (0,  52, 35), 80, 4),
+            (118, (0,  38, 27), 95, 5),
         ]):
             wy = y_top + wy_off * _SS
             if wy >= y_bot:
                 continue
             ph   = i * 17 * _SS
-            pts  = [(px, wy + int(amp_i * _SS * math.sin(2 * math.pi * (px + scroll + ph) / (wl_i * _SS))))
+            freq   = 2 * math.pi / (wl_i * _SS)
+            amp_ss = amp_i * _SS
+            base   = scroll + ph
+            pts  = [(px, wy + int(amp_ss * math.sin(freq * (px + base))))
                     for px in range(_W + 1)]
             d.line(pts, fill=wc, width=_SS)
 
@@ -423,9 +431,6 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
             flash_r = int(65 * (1 - flash / 4))
             d.rectangle([0, y_top, _W - 1, y_bot], fill=(flash_r, 0, 0))
 
-        bxs = [8,  52,  96, 140, 184, 228,  30,  74]
-        lns = [22, 28,  20,  26,  24,  18,  32,  16]
-        spd = [5,   7,   4,   6,   5,   8,   6,   3]
         for row_off in (14, 50, 86, 112):
             ry = y_top + row_off * _SS
             if ry >= y_bot:
@@ -434,8 +439,8 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
                 sy = ry + (j % 3 - 1) * 6 * _SS
                 if sy < y_top or sy >= y_bot:
                     continue
-                sx = int((bxs[j] * _SS - frame * spd[j]) % _W)
-                ex = sx + lns[j] * _SS
+                sx = int((_WINDY_BXS[j] * _SS - frame * _WINDY_SPD[j]) % _W)
+                ex = sx + _WINDY_LNS[j] * _SS
                 bright = 55 + int(35 * math.sin(
                     frame * math.pi / (FRAME_RATE * 0.8) + j * math.pi / 4))
                 sc = (bright, bright // 2, bright // 4)
@@ -462,7 +467,7 @@ def _draw_edge_accents(d, accent, frame):
     pulse = 0.2 + 0.8 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.5)))
     for x in range(3 * _SS):
         fade = (3 * _SS - x) / (3.0 * _SS)
-        col  = tuple(int(c * pulse * fade * 0.28) for c in accent)
+        col  = tuple(int(c * pulse * fade * 0.35) for c in accent)
         d.line([(x, 18 * _SS), (x, _H - 1)], fill=col)
         d.line([(_W - 1 - x, 18 * _SS), (_W - 1 - x, _H - 1)], fill=col)
 
@@ -473,7 +478,7 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
     y_mid = y0 + strip_h // 2
     cx    = _W // 2
     d.rectangle([0, y0, _W - 1, y0 + strip_h], fill=(18, 18, 18))
-    sep_b = int(38 + 42 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.0))))
+    sep_b = int(45 + 55 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.0))))
     sep_c = tuple(min(255, int(c * sep_b / 255)) for c in status_color)
     d.line([0, y0 + strip_h, _W, y0 + strip_h], fill=sep_c, width=_SS)
 
@@ -565,7 +570,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         zone_c = (_GREEN if actual_gust < GOOD_MPH
                   else (_YELLOW if actual_gust <= CAUTION_MPH else _RED))
         ob_p   = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.5)))
-        ob_col = tuple(max(16, int(c * ob_p * 0.20)) for c in zone_c)
+        ob_col = tuple(max(16, int(c * ob_p * 0.25)) for c in zone_c)
     d.arc((cx - ob, cy - ob, cx + ob, cy + ob),
           _GAUGE_ARC_START - 4, arc_end + 4, fill=ob_col, width=2 * _SS)
 
@@ -580,7 +585,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         for i in range(12):
             ang_r = math.radians(ray_rot + i * 30)
             ca_r, sa_r = math.cos(ang_r), math.sin(ang_r)
-            b = int(9 + 5 * math.sin(frame * math.pi / (FRAME_RATE * 2.5) + i * math.pi / 6))
+            b = int(12 + 8 * math.sin(frame * math.pi / (FRAME_RATE * 2.5) + i * math.pi / 6))
             d.line([
                 (int(cx + 20 * _SS * ca_r), int(cy + 20 * _SS * sa_r)),
                 (int(cx + 48 * _SS * ca_r), int(cy + 48 * _SS * sa_r))
@@ -617,7 +622,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
 
     # Pulsing brightness boost on the active zone — breathes to confirm live data
     if not stale:
-        zp = 0.30 + 0.20 * abs(math.sin(frame * math.pi / (FRAME_RATE * 1.8)))
+        zp = 0.28 + 0.26 * abs(math.sin(frame * math.pi / (FRAME_RATE * 1.8)))
         if needle_gust < GOOD_MPH:
             za_s, za_e, zc = _GAUGE_ARC_START, GOOD_ARC_END, _GREEN
         elif needle_gust <= CAUTION_MPH:
@@ -740,7 +745,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
               else ((240, 190, 0) if needle_gust <= CAUTION_MPH
                     else (240, 60, 60)))
         tp = 0.65 + 0.35 * math.sin(frame * math.pi / (FRAME_RATE * 0.7))
-        tr = max(2 * _SS, int(5 * _SS * tp))
+        tr = max(2 * _SS, int(6 * _SS * tp))
         d.ellipse((int(tip[0]) - tr, int(tip[1]) - tr,
                    int(tip[0]) + tr, int(tip[1]) + tr), fill=tc)
 
@@ -751,11 +756,11 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     if stale:
         hub_c = (90, 90, 90)
     elif actual_gust > CAUTION_MPH:
-        hub_c = (220, 55, 55)
+        hub_c = (235, 60, 60)
     elif actual_gust > GOOD_MPH:
-        hub_c = (210, 170, 0)
+        hub_c = (225, 185, 0)
     else:
-        hub_c = (0, 180, 80)
+        hub_c = (0, 200, 90)
     d.ellipse((cx - h3, cy - h3, cx + h3, cy + h3), fill=hub_c)
 
 
@@ -808,13 +813,13 @@ def render_display(state, frame, needle_gust):
         freshness = max(0.0, 1.0 - age / STALE_MINUTES)
         bar_hw = int(42 * _SS * freshness)
         if bar_hw > 0:
-            bright = max(24, int(65 * freshness))
+            bright = max(28, int(85 * freshness))
             by = info_y - 7 * _SS
             d.line([(cx - bar_hw, by), (cx + bar_hw, by)], fill=(bright, bright, bright), width=_SS)
 
     # Separator — 3-zone gradient line: bright center, dim edges; 6 draw calls total
     sep_p = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3)))
-    for sx0, bfac in ((int(cx * 0.10), 0.18), (int(cx * 0.40), 0.34), (int(cx * 0.70), 0.52)):
+    for sx0, bfac in ((int(cx * 0.10), 0.22), (int(cx * 0.40), 0.42), (int(cx * 0.70), 0.62)):
         sc_ = tuple(int(c * sep_p * bfac) for c in accent)
         if any(v > 0 for v in sc_):
             d.line([(_W // 2 - cx + sx0, info_y - 4 * _SS), (_W // 2 + cx - sx0, info_y - 4 * _SS)],
@@ -828,7 +833,7 @@ def render_display(state, frame, needle_gust):
     band_y0 = info_y + 4 * _SS
     band_y1 = band_y0 + band_h
     _, badge_bg = _STATUS_CONFIG[msg]
-    band_bg = badge_bg if stale else tuple(min(255, int(c * 0.55)) for c in accent)
+    band_bg = badge_bg if stale else tuple(min(255, int(c * 0.65)) for c in accent)
     d.rectangle([0, band_y0, _W - 1, band_y1], fill=band_bg)
     # Bright top/bottom edges on the band
     edge_p  = 0.5 + 0.5 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.0)))
@@ -913,7 +918,7 @@ def render_display(state, frame, needle_gust):
     bwave_off   = (frame * 3) % (22 * _SS)
     bwave_row1, bwave_row2 = [], []
     for bx in range(_W):
-        by = _H - 1 - int(2 * _SS * math.sin(2 * math.pi * (bx + bwave_off) / (22 * _SS)))
+        by = _H - 1 - int(3 * _SS * math.sin(2 * math.pi * (bx + bwave_off) / (22 * _SS)))
         bwave_row1.append((bx, by))
         if by > 0:
             bwave_row2.append((bx, by - 1))
