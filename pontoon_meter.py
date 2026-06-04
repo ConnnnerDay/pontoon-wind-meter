@@ -68,6 +68,16 @@ _WINDY_BXS = [8,  52,  96, 140, 184, 228,  30,  74]
 _WINDY_LNS = [22, 28,  20,  26,  24,  18,  32,  16]
 _WINDY_SPD = [5,   7,   4,   6,   5,   8,   6,   3]
 
+# GOOD-state info-section wave parameters — static, avoids list re-creation every frame
+_GOOD_WAVE_PARAMS = [
+    (10,  (0, 108, 70), 70, 3),
+    (30,  (0,  93, 61), 90, 5),
+    (52,  (0,  80, 52), 80, 4),
+    (74,  (0,  66, 43), 65, 3),
+    (96,  (0,  52, 35), 80, 4),
+    (118, (0,  38, 27), 95, 5),
+]
+
 # Font loading — bundled fonts ship in assets/ so the Pi always has them
 _ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 _FONT_CANDIDATES = [
@@ -114,9 +124,14 @@ except Exception as e:
     logging.critical("Display init failed: %s", e)
     sys.exit(1)
 
-# Supersampled canvas dimensions — all drawing happens here, then LANCZOS to device
+# Supersampled canvas dimensions — all drawing happens here, then BILINEAR downsample to device
 _W = device.width  * _SS
 _H = device.height * _SS
+
+# Per-frame constants derived from _W / _SS — precomputed once to avoid per-frame work
+_GOOD_PARTICLE_X  = [(i * 17 * _SS + 11 * _SS) % _W for i in range(14)]
+_CAUTION_DROP_BX  = [(i * 12 * _SS) % _W for i in range(20)]
+_MARINE_WAVE_FREQ = 2 * math.pi / (55 * _SS)   # reused by _draw_marine_wave
 
 # Thread-safe state shared between the data thread and the animation loop
 _lock  = threading.Lock()
@@ -359,14 +374,7 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
     """Animated background texture drawn behind the info-section text."""
     if status == "GOOD":
         scroll = (frame * 2) % (80 * _SS)
-        for i, (wy_off, wc, wl_i, amp_i) in enumerate([
-            (10,  (0, 108, 70), 70, 3),
-            (30,  (0,  93, 61), 90, 5),
-            (52,  (0,  80, 52), 80, 4),
-            (74,  (0,  66, 43), 65, 3),
-            (96,  (0,  52, 35), 80, 4),
-            (118, (0,  38, 27), 95, 5),
-        ]):
+        for i, (wy_off, wc, wl_i, amp_i) in enumerate(_GOOD_WAVE_PARAMS):
             wy = y_top + wy_off * _SS
             if wy >= y_bot:
                 continue
@@ -381,7 +389,7 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
         # Floating upward particles — slow drift gives GOOD state a lively feel
         span = y_bot - y_top
         for i in range(14):
-            px_pos  = (i * 17 * _SS + 11 * _SS) % _W
+            px_pos  = _GOOD_PARTICLE_X[i]
             speed   = 1 + (i % 3)
             py_off  = span - (frame * speed + i * (span // 14)) % span
             py_pos  = y_top + int(py_off)
@@ -395,7 +403,7 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
     elif status == "CAUTION":
         info_h = y_bot - y_top
         for i in range(20):
-            bx  = (i * 12 * _SS) % _W
+            bx  = _CAUTION_DROP_BX[i]
             t   = (frame * 2 + i * 7) % (info_h + 14 * _SS)
             x0, y0 = bx,              y_top + t - 14 * _SS
             x1, y1 = bx + 8 * _SS,   y0 + 10 * _SS
@@ -441,7 +449,7 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
                     continue
                 sx = int((_WINDY_BXS[j] * _SS - frame * _WINDY_SPD[j]) % _W)
                 ex = sx + _WINDY_LNS[j] * _SS
-                bright = 55 + int(35 * math.sin(
+                bright = 62 + int(42 * math.sin(
                     frame * math.pi / (FRAME_RATE * 0.8) + j * math.pi / 4))
                 sc = (bright, bright // 2, bright // 4)
                 if ex <= _W:
@@ -453,10 +461,9 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
 
 def _draw_marine_wave(d, frame, color, y_mid):
     """Scrolling sine wave shown in the bottom strip when no alerts are active."""
-    amplitude  = 3  * _SS
-    wavelength = 55 * _SS
-    offset     = (frame * 2) % wavelength
-    pts = [(x, y_mid + int(amplitude * math.sin(2 * math.pi * (x + offset) / wavelength)))
+    amplitude = 3 * _SS
+    offset    = (frame * 2) % (55 * _SS)
+    pts = [(x, y_mid + int(amplitude * math.sin(_MARINE_WAVE_FREQ * (x + offset))))
            for x in range(_W + 1)]
     d.line(pts, fill=color, width=_SS)
 
@@ -511,10 +518,10 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
             time_str = time.strftime("%H:%M")
             if age_minutes is not None:
                 age_str = f"{int(age_minutes)}m"
-                d.text((cx - 4 * _SS, y_mid), time_str, fill=(110, 110, 110), font=font_strip, anchor="rm")
-                d.text((cx + 4 * _SS, y_mid), age_str,  fill=(72, 72, 72),   font=font_strip, anchor="lm")
+                d.text((cx - 4 * _SS, y_mid), time_str, fill=(128, 128, 128), font=font_strip, anchor="rm")
+                d.text((cx + 4 * _SS, y_mid), age_str,  fill=(90, 90, 90),   font=font_strip, anchor="lm")
             else:
-                d.text((cx, y_mid), time_str, fill=(110, 110, 110), font=font_strip, anchor="mm")
+                d.text((cx, y_mid), time_str, fill=(128, 128, 128), font=font_strip, anchor="mm")
 
         # Horizontal slot progress dots at right edge
         n_slots = len(slots)
@@ -544,7 +551,7 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
         count_str = f"{idx + 1}/{len(alerts)}"
         cw = int(d.textlength(count_str, font=font_strip))
         d.text((_W - cw - 4 * _SS, y_mid), count_str,
-               fill=(65, 65, 65), font=font_strip, anchor="lm")
+               fill=(82, 82, 82), font=font_strip, anchor="lm")
 
 
 def _dim(color, factor):
@@ -604,9 +611,9 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         gd, yd, rd = dim * 0.35, dim * 0.35, dim
 
     # Soft ambient glow behind zone arcs — wider dim pre-pass for depth
-    d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,   fill=_dim(_GREEN,  gd * 0.22), width=26 * _SS)
-    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END, fill=_dim(_YELLOW, yd * 0.22), width=26 * _SS)
-    d.arc(box, CAUTION_ARC_END, arc_end,         fill=_dim(_RED,    rd * 0.22), width=26 * _SS)
+    d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,   fill=_dim(_GREEN,  gd * 0.26), width=26 * _SS)
+    d.arc(box, GOOD_ARC_END,    CAUTION_ARC_END, fill=_dim(_YELLOW, yd * 0.26), width=26 * _SS)
+    d.arc(box, CAUTION_ARC_END, arc_end,         fill=_dim(_RED,    rd * 0.26), width=26 * _SS)
 
     # Colored zone arcs
     d.arc(box, _GAUGE_ARC_START, GOOD_ARC_END,   fill=_dim(_GREEN,  gd), width=16 * _SS)
@@ -709,9 +716,9 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         ang += math.radians(1.5 * math.sin(frame * math.pi / (FRAME_RATE * 0.10)))
     if not stale and needle_gust > 0.1:
         glow_ang = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
-        glow_c   = ((0, 28, 14) if needle_gust < GOOD_MPH
-                    else ((32, 24, 0) if needle_gust <= CAUTION_MPH
-                          else (32, 6, 6)))
+        glow_c   = ((0, 36, 18) if needle_gust < GOOD_MPH
+                    else ((42, 32, 0) if needle_gust <= CAUTION_MPH
+                          else (42, 8, 8)))
         d.arc(box, glow_ang - 7, glow_ang + 7, fill=glow_c, width=22 * _SS)
     ca, sa = math.cos(ang), math.sin(ang)
     perp = ang - math.pi / 2
@@ -752,7 +759,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     # Pivot hub — three concentric rings; center dot colored by current zone
     h1, h2, h3 = 11 * _SS, 8 * _SS, 5 * _SS
     d.ellipse((cx - h1, cy - h1, cx + h1, cy + h1), fill=(28, 28, 28), outline=(108, 108, 108), width=_SS)
-    d.ellipse((cx - h2, cy - h2, cx + h2, cy + h2), fill=(18, 18, 18), outline=(55, 55, 55), width=_SS)
+    d.ellipse((cx - h2, cy - h2, cx + h2, cy + h2), fill=(18, 18, 18), outline=(68, 68, 68), width=_SS)
     if stale:
         hub_c = (90, 90, 90)
     elif actual_gust > CAUTION_MPH:
@@ -840,8 +847,11 @@ def render_display(state, frame, needle_gust):
     edge_c  = tuple(min(255, int(c * edge_p)) for c in accent) if not stale else (55, 55, 55)
     d.line([(0, band_y0), (_W - 1, band_y0)], fill=edge_c, width=2 * _SS)
     d.line([(0, band_y1), (_W - 1, band_y1)], fill=tuple(c // 2 for c in edge_c), width=_SS)
-    vib_x = [-1 * _SS, 0, 1 * _SS, 0][frame % 4] if msg == "TOO WINDY" and not stale else 0
-    d.text((cx + vib_x, band_y0 + band_h // 2), msg,
+    vib_x  = [-1 * _SS, 0, 1 * _SS, 0][frame % 4] if msg == "TOO WINDY" and not stale else 0
+    band_cy = band_y0 + band_h // 2
+    if not stale:
+        d.text((cx + vib_x + _SS, band_cy + _SS), msg, fill=(0, 0, 0), font=font_unit, anchor="mm")
+    d.text((cx + vib_x, band_cy), msg,
            fill=(60, 60, 60) if stale else (255, 255, 255),
            font=font_unit, anchor="mm")
 
