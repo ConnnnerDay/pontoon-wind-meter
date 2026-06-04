@@ -213,9 +213,9 @@ def _draw_trend(d, cx, y, trend):
 
 def _draw_compass(d, cx, cy, r, wdir_str):
     """Compact compass rose: dim circle, N tick, and a filled directional arrow."""
-    d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(70, 70, 70), width=_SS)
+    d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(85, 85, 85), width=_SS)
     # North tick — tiny mark at the top of the circle
-    d.line([(cx, cy - r + _SS), (cx, cy - r + 4 * _SS)], fill=(100, 100, 100), width=_SS)
+    d.line([(cx, cy - r + _SS), (cx, cy - r + 4 * _SS)], fill=(125, 125, 125), width=_SS)
     # Cardinal marks at E, S, W (single dim pixel each)
     for card_deg in (90, 180, 270):
         cr = math.radians(card_deg)
@@ -246,11 +246,11 @@ def _draw_compass(d, cx, cy, r, wdir_str):
     tail_y = cy + (r - 5 * _SS) * cos_r
 
     d.polygon([(int(tip_x), int(tip_y)), (int(l_x), int(l_y)),
-               (int(rr_x), int(rr_y))], fill=(225, 225, 225))
+               (int(rr_x), int(rr_y))], fill=(245, 245, 245))
     d.line([(int(base_x), int(base_y)), (int(tail_x), int(tail_y))],
-           fill=(130, 130, 130), width=_SS)
+           fill=(155, 155, 155), width=_SS)
     # Abbreviation in the lower half of the circle
-    d.text((cx, cy + 3 * _SS), wdir_str, fill=(130, 130, 130), font=font_label, anchor="mt")
+    d.text((cx, cy + 3 * _SS), wdir_str, fill=(155, 155, 155), font=font_label, anchor="mt")
 
 
 def _draw_wind_streaks(d, cx, cy, r, gust, frame):
@@ -385,8 +385,8 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
             speed   = 1 + (i % 3)
             py_off  = span - (frame * speed + i * (span // 14)) % span
             py_pos  = y_top + int(py_off)
-            bright  = int(65 + 55 * math.sin(frame * math.pi / (FRAME_RATE * 2.2) + i * 0.8))
-            pc = (0, int(bright * 0.70), int(bright * 0.45))
+            bright  = int(78 + 65 * math.sin(frame * math.pi / (FRAME_RATE * 2.2) + i * 0.8))
+            pc = (0, int(bright * 0.72), int(bright * 0.46))
             if y_top <= py_pos < y_bot:
                 d.point((px_pos, py_pos), fill=pc)
                 if py_pos + 1 < y_bot:
@@ -402,9 +402,9 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
             y0c = max(y0, y_top);  y1c = min(y1, y_bot)
             if y1c <= y_top or y0c >= y_bot:
                 continue
-            bright = 90 + int(50 * math.sin(
+            bright = 100 + int(60 * math.sin(
                 frame * math.pi / (FRAME_RATE * 1.5) + i * math.pi / 5))
-            rc = (int(bright * 0.28), int(bright * 0.40), int(bright * 0.65))
+            rc = (int(bright * 0.25), int(bright * 0.38), int(bright * 0.72))
             d.line([(x0, y0c), (x1, y1c)], fill=rc, width=2 * _SS)
             # Splash V-mark when drop reaches the bottom of the info section
             if y1 >= y_bot - 5 * _SS:
@@ -428,7 +428,7 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
         # Brief alarm flash every ~10 s — red wash fades in/out over 4 frames
         flash = (frame * 2) % 100
         if flash < 4:
-            flash_r = int(65 * (1 - flash / 4))
+            flash_r = int(80 * (1 - flash / 4))
             d.rectangle([0, y_top, _W - 1, y_bot], fill=(flash_r, 0, 0))
 
         for row_off in (14, 50, 86, 112):
@@ -465,9 +465,9 @@ def _draw_marine_wave(d, frame, color, y_mid):
 def _draw_edge_accents(d, accent, frame):
     """Thin pulsing accent strips on the left and right screen edges."""
     pulse = 0.2 + 0.8 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.5)))
+    fades = [(3 * _SS - x) / (3.0 * _SS) * pulse * 0.35 for x in range(3 * _SS)]
     for x in range(3 * _SS):
-        fade = (3 * _SS - x) / (3.0 * _SS)
-        col  = tuple(int(c * pulse * fade * 0.35) for c in accent)
+        col = tuple(int(c * fades[x]) for c in accent)
         d.line([(x, 18 * _SS), (x, _H - 1)], fill=col)
         d.line([(_W - 1 - x, 18 * _SS), (_W - 1 - x, _H - 1)], fill=col)
 
@@ -497,11 +497,11 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
         if kind == "wind":
             d.ellipse((r3, y_mid - r3, r9, y_mid + r3), fill=(55, 115, 55))
             d.text((cx, y_mid), _fit_text(d, text, font_strip, strip_max),
-                   fill=(175, 195, 175), font=font_strip, anchor="mm")
+                   fill=(195, 215, 195), font=font_strip, anchor="mm")
         elif kind == "marine":
             d.ellipse((r3, y_mid - r3, r9, y_mid + r3), fill=(35, 70, 115))
             d.text((cx, y_mid), _fit_text(d, text, font_strip, strip_max),
-                   fill=(110, 140, 160), font=font_strip, anchor="mm")
+                   fill=(130, 158, 180), font=font_strip, anchor="mm")
         else:
             _draw_marine_wave(d, frame, wave_color, y_mid)
             d.ellipse((r3, y_mid - r3, r9, y_mid + r3), outline=(72, 72, 72), width=_SS)
@@ -521,7 +521,7 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
         for si in range(n_slots):
             dx = _W - 4 * _SS - (n_slots - 1 - si) * 5 * _SS
             dc = (tuple(min(255, int(c * 0.65)) for c in status_color) if si == idx
-                  else (36, 36, 36))
+                  else (50, 50, 50))
             pr = 2 * _SS
             d.ellipse((dx - pr, y_mid - pr, dx + pr, y_mid + pr), fill=dc)
         return
@@ -684,13 +684,13 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
                    fill=(220, 200, 55), width=2 * _SS)
             lx = int(cx + (r + 15 * _SS) * p_ca)
             ly = int(cy + (r + 15 * _SS) * p_sa)
-            d.text((lx, ly), f"{peak:.0f}", fill=(140, 120, 28), font=font_label, anchor="mm")
+            d.text((lx, ly), f"{peak:.0f}", fill=(168, 148, 38), font=font_label, anchor="mm")
 
     if stale:
         sweep_pos = _GAUGE_ARC_START + (frame * 3) % _GAUGE_ARC_SWEEP
         trail_s   = max(_GAUGE_ARC_START, sweep_pos - 28)
         d.arc(box, trail_s, sweep_pos, fill=(0, 22, 11), width=14 * _SS)
-        d.text((cx, cy), "STALE", fill=(55, 55, 55), font=font_label, anchor="mm")
+        d.text((cx, cy), "STALE", fill=(72, 72, 72), font=font_label, anchor="mm")
 
     # Sustained avg wind: diamond marker on the arc, plus tiny readout below hub
     if wind is not None and not stale:
@@ -700,7 +700,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         wy = int(cy + (r - 10 * _SS) * w_sa)
         ds = 4 * _SS
         d.polygon([(wx, wy - ds), (wx + ds, wy), (wx, wy + ds), (wx - ds, wy)],
-                  fill=(45, 45, 45), outline=(145, 145, 145))
+                  fill=(45, 45, 45), outline=(178, 178, 178))
 
     # Kite-shaped needle — soft glow arc at its angle for a back-lit instrument feel
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
@@ -751,7 +751,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
 
     # Pivot hub — three concentric rings; center dot colored by current zone
     h1, h2, h3 = 11 * _SS, 8 * _SS, 5 * _SS
-    d.ellipse((cx - h1, cy - h1, cx + h1, cy + h1), fill=(28, 28, 28), outline=(90, 90, 90), width=_SS)
+    d.ellipse((cx - h1, cy - h1, cx + h1, cy + h1), fill=(28, 28, 28), outline=(108, 108, 108), width=_SS)
     d.ellipse((cx - h2, cy - h2, cx + h2, cy + h2), fill=(18, 18, 18), outline=(55, 55, 55), width=_SS)
     if stale:
         hub_c = (90, 90, 90)
@@ -800,7 +800,7 @@ def render_display(state, frame, needle_gust):
     if not stale:
         halo_p   = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3.0)))
         halo_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
-        for h_off, h_fac in ((r + 17 * _SS, 0.13), (r + 24 * _SS, 0.07)):
+        for h_off, h_fac in ((r + 17 * _SS, 0.17), (r + 24 * _SS, 0.10)):
             hc = tuple(max(0, int(c * h_fac * halo_p)) for c in accent)
             if any(v > 0 for v in hc):
                 d.arc((cx - h_off, cy - h_off, cx + h_off, cy + h_off),
@@ -850,7 +850,7 @@ def render_display(state, frame, needle_gust):
     if not stale and (wtmp is not None or wvht is not None):
         # Dark tinted backdrop so text reads over the animated info-section background
         d.rectangle([0, row_y - 9 * _SS, _W - 1, row_y + 9 * _SS],
-                    fill=tuple(max(0, c // 5) for c in accent))
+                    fill=tuple(max(0, c // 4) for c in accent))
         # Normalize accent to ~200 peak brightness so text is always legible
         peak_ch = max(accent) or 1
         ctc = tuple(min(255, int(c * 200 // peak_ch)) for c in accent)
