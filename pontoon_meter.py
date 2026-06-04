@@ -70,13 +70,14 @@ _WINDY_SPD = [5,   7,   4,   6,   5,   8,   6,   3]
 
 # GOOD-state info-section wave parameters — static, avoids list re-creation every frame
 _GOOD_WAVE_PARAMS = [
-    (10,  (0, 108, 70), 70, 3),
-    (30,  (0,  93, 61), 90, 5),
-    (52,  (0,  80, 52), 80, 4),
-    (74,  (0,  66, 43), 65, 3),
-    (96,  (0,  52, 35), 80, 4),
-    (118, (0,  38, 27), 95, 5),
+    (10,  (0, 122, 79), 70, 3),
+    (30,  (0, 105, 68), 90, 5),
+    (52,  (0,  90, 58), 80, 4),
+    (74,  (0,  75, 48), 65, 3),
+    (96,  (0,  59, 39), 80, 4),
+    (118, (0,  43, 30), 95, 5),
 ]
+_GOOD_WAVE_FREQS = [2 * math.pi / (wl_i * _SS) for (_, _, wl_i, _) in _GOOD_WAVE_PARAMS]
 
 # Font loading — bundled fonts ship in assets/ so the Pi always has them
 _ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
@@ -136,6 +137,7 @@ _GOOD_PARTICLE_X  = [(i * 17 * _SS + 11 * _SS) % _W for i in range(14)]
 _CAUTION_DROP_BX  = [(i * 12 * _SS) % _W for i in range(20)]
 _MARINE_WAVE_FREQ = 2 * math.pi / (55 * _SS)   # reused by _draw_marine_wave
 _BWAVE_FREQ       = 2 * math.pi / (22 * _SS)   # bottom accent wave frequency
+_EDGE_FADE_BASE   = [(3 * _SS - x) / (3.0 * _SS) for x in range(3 * _SS)]
 
 # Gauge layout — cx/cy/r are the same every frame; centralise here so _TICK_DATA stays in sync
 _GAUGE_R  = 70 * _SS
@@ -166,6 +168,10 @@ _BAND_H  = 36 * _SS
 _BAND_Y0 = _INFO_Y + 4 * _SS
 _BAND_Y1 = _BAND_Y0 + _BAND_H
 _ROW_Y   = _BAND_Y1 + 10 * _SS
+# Separator line segment x-ranges and y positions — avoids per-frame float multiply + int()
+_SEP_SEGS = [(int(_GAUGE_CX * f), b) for f, b in ((0.10, 0.22), (0.40, 0.42), (0.70, 0.62))]
+_SEP_Y1   = _INFO_Y - 4 * _SS
+_SEP_Y2   = _INFO_Y - 5 * _SS
 
 # Thread-safe state shared between the data thread and the animation loop
 _lock  = threading.Lock()
@@ -412,8 +418,8 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
             wy = y_top + wy_off * _SS
             if wy >= y_bot:
                 continue
-            ph   = i * 17 * _SS
-            freq   = 2 * math.pi / (wl_i * _SS)
+            ph     = i * 17 * _SS
+            freq   = _GOOD_WAVE_FREQS[i]
             amp_ss = amp_i * _SS
             base   = scroll + ph
             pts  = [(px, wy + int(amp_ss * math.sin(freq * (px + base))))
@@ -506,7 +512,8 @@ def _draw_marine_wave(d, frame, color, y_mid):
 def _draw_edge_accents(d, accent, frame):
     """Thin pulsing accent strips on the left and right screen edges."""
     pulse = 0.2 + 0.8 * abs(math.sin(frame * math.pi / (FRAME_RATE * 2.5)))
-    fades = [(3 * _SS - x) / (3.0 * _SS) * pulse * 0.35 for x in range(3 * _SS)]
+    scale = pulse * 0.35
+    fades = [f * scale for f in _EDGE_FADE_BASE]
     for x in range(3 * _SS):
         col = tuple(int(c * fades[x]) for c in accent)
         d.line([(x, 18 * _SS), (x, _H - 1)], fill=col)
@@ -745,7 +752,8 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         glow_c   = ((0, 36, 18) if needle_gust < GOOD_MPH
                     else ((42, 32, 0) if needle_gust <= CAUTION_MPH
                           else (42, 8, 8)))
-        d.arc(box, glow_ang - 7, glow_ang + 7, fill=glow_c, width=22 * _SS)
+        glow_w = int((17 + 7 * abs(math.sin(frame * math.pi / (FRAME_RATE * 0.7)))) * _SS)
+        d.arc(box, glow_ang - 7, glow_ang + 7, fill=glow_c, width=glow_w)
     ca, sa = math.cos(ang), math.sin(ang)
     perp = ang - math.pi / 2
     cp, sp = math.cos(perp), math.sin(perp)
@@ -786,6 +794,8 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     h1, h2, h3 = 11 * _SS, 8 * _SS, 5 * _SS
     d.ellipse((cx - h1, cy - h1, cx + h1, cy + h1), fill=(28, 28, 28), outline=(108, 108, 108), width=_SS)
     d.ellipse((cx - h2, cy - h2, cx + h2, cy + h2), fill=(18, 18, 18), outline=(68, 68, 68), width=_SS)
+    # Specular highlight — upper-left catch-light gives the hub a convex, 3-D instrument feel
+    d.ellipse((cx - 5 * _SS, cy - 7 * _SS, cx - 1 * _SS, cy - 3 * _SS), fill=(95, 95, 95))
     if stale:
         hub_c = (90, 90, 90)
     elif actual_gust > CAUTION_MPH:
@@ -850,13 +860,11 @@ def render_display(state, frame, needle_gust):
 
     # Separator — 3-zone gradient line: bright center, dim edges; 6 draw calls total
     sep_p = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3)))
-    for sx0, bfac in ((int(cx * 0.10), 0.22), (int(cx * 0.40), 0.42), (int(cx * 0.70), 0.62)):
+    for sx0, bfac in _SEP_SEGS:
         sc_ = tuple(int(c * sep_p * bfac) for c in accent)
         if any(v > 0 for v in sc_):
-            d.line([(_W // 2 - cx + sx0, info_y - 4 * _SS), (_W // 2 + cx - sx0, info_y - 4 * _SS)],
-                   fill=sc_, width=_SS)
-            d.line([(_W // 2 - cx + sx0, info_y - 5 * _SS), (_W // 2 + cx - sx0, info_y - 5 * _SS)],
-                   fill=tuple(v // 2 for v in sc_), width=_SS)
+            d.line([(sx0, _SEP_Y1), (_W - sx0, _SEP_Y1)], fill=sc_, width=_SS)
+            d.line([(sx0, _SEP_Y2), (_W - sx0, _SEP_Y2)], fill=tuple(v // 2 for v in sc_), width=_SS)
 
     # ── Info section ──────────────────────────────────────────────────────────
     # Full-width status band (replaces narrow centered badge)
