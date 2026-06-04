@@ -160,6 +160,13 @@ for _t in range(0, GAUGE_MAX + 1, 5):
     ))
 del _t, _ta, _tc, _ts
 
+# Info / status-band layout — all depend only on the constants above, so precompute once
+_INFO_Y  = _GAUGE_CY + int(_GAUGE_R * 0.707) + 8 * _SS
+_BAND_H  = 36 * _SS
+_BAND_Y0 = _INFO_Y + 4 * _SS
+_BAND_Y1 = _BAND_Y0 + _BAND_H
+_ROW_Y   = _BAND_Y1 + 10 * _SS
+
 # Thread-safe state shared between the data thread and the animation loop
 _lock  = threading.Lock()
 _state = {
@@ -249,7 +256,7 @@ def _draw_trend(d, cx, y, trend):
         d.polygon([(cx, y + h), (cx - w, y), (cx + w, y)], fill=(30, 165, 225))
     else:
         d.line([(cx - 11 * _SS, y + h // 2), (cx + 11 * _SS, y + h // 2)],
-               fill=(85, 85, 85), width=4 * _SS)
+               fill=(85, 85, 85), width=3 * _SS)
 
 
 
@@ -312,7 +319,7 @@ def _draw_wind_streaks(d, cx, cy, r, gust, frame):
         y0 = cy - inner * sa
         x1 = int(x0 + hw * cp);  y1 = int(y0 - hw * sp)
         x2 = int(x0 - hw * cp);  y2 = int(y0 + hw * sp)
-        d.line([(x1, y1), (x2, y2)], fill=(bright, bright, bright), width=2 * _SS)
+        d.line([(x1, y1), (x2, y2)], fill=(max(0, bright - 20), max(0, bright - 10), bright), width=2 * _SS)
 
 
 def _draw_weather_icon(d, x, y, status, frame, r=18):
@@ -813,8 +820,7 @@ def render_display(state, frame, needle_gust):
     cx = _GAUGE_CX
     cy = _GAUGE_CY
 
-    # Pre-compute info_y so the background draws before gauge text
-    info_y = cy + int(r * 0.707) + 8 * _SS
+    info_y = _INFO_Y
 
     # Draw animated info-section background first (behind all text)
     _draw_info_bg(d, info_y, _H - 1, msg, frame)
@@ -854,9 +860,9 @@ def render_display(state, frame, needle_gust):
 
     # ── Info section ──────────────────────────────────────────────────────────
     # Full-width status band (replaces narrow centered badge)
-    band_h  = 36 * _SS   # 18 px device — reduced to give the number more vertical room
-    band_y0 = info_y + 4 * _SS
-    band_y1 = band_y0 + band_h
+    band_h  = _BAND_H
+    band_y0 = _BAND_Y0
+    band_y1 = _BAND_Y1
     _, badge_bg = _STATUS_CONFIG[msg]
     band_bg = badge_bg if stale else tuple(min(255, int(c * 0.65)) for c in accent)
     d.rectangle([0, band_y0, _W - 1, band_y1], fill=band_bg)
@@ -874,7 +880,7 @@ def render_display(state, frame, needle_gust):
            font=font_unit, anchor="mm")
 
     # Secondary info row — water temp + wave height, tucked just below the band
-    row_y = band_y1 + 10 * _SS
+    row_y = _ROW_Y
     if not stale and (wtmp is not None or wvht is not None):
         # Dark tinted backdrop so text reads over the animated info-section background
         d.rectangle([0, row_y - 9 * _SS, _W - 1, row_y + 9 * _SS],
@@ -941,7 +947,7 @@ def render_display(state, frame, needle_gust):
     _draw_edge_accents(d, accent, frame)
 
     # Animated wave at screen bottom — completes the edge framing (2px tall)
-    accent_dim  = tuple(c // 5 for c in accent)
+    accent_dim  = tuple(c // 4 for c in accent)
     accent_dim2 = tuple(c // 10 for c in accent)
     bwave_off   = (frame * 3) % (22 * _SS)
     bwave_row1, bwave_row2 = [], []
@@ -1152,7 +1158,6 @@ def _start_web_server():
 def main():
     global _needle_gust, _needle_vel
 
-    _load_gif_icons()
     _start_web_server()
     threading.Thread(target=_data_loop, daemon=True).start()
 
