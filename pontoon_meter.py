@@ -117,6 +117,9 @@ font_strip  = _load_font(16  * _SS)
 font_unit   = _load_bold(36  * _SS)
 font_big    = _load_bold(64  * _SS)
 
+# Pre-measure constant text widths — avoids one textlength() call per frame
+_MPH_UNIT_W = int(ImageDraw.Draw(Image.new("RGB", (1, 1))).textlength("mph", font=font_unit))
+
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
     device = ili9341(_serial, width=320, height=240, rotate=3)
@@ -132,6 +135,30 @@ _H = device.height * _SS
 _GOOD_PARTICLE_X  = [(i * 17 * _SS + 11 * _SS) % _W for i in range(14)]
 _CAUTION_DROP_BX  = [(i * 12 * _SS) % _W for i in range(20)]
 _MARINE_WAVE_FREQ = 2 * math.pi / (55 * _SS)   # reused by _draw_marine_wave
+_BWAVE_FREQ       = 2 * math.pi / (22 * _SS)   # bottom accent wave frequency
+
+# Gauge layout — cx/cy/r are the same every frame; centralise here so _TICK_DATA stays in sync
+_GAUGE_R  = 70 * _SS
+_GAUGE_CX = _W // 2
+_GAUGE_CY = (18 + 14) * _SS + _GAUGE_R + 11 * _SS
+
+# Precomputed tick-mark geometry — saves 6 trig pairs + 12 multiplies per frame
+_TICK_OUTER = _GAUGE_R - 8  * _SS
+_TICK_INNER = _GAUGE_R - 18 * _SS
+_TICK_DATA  = []
+for _t in range(0, GAUGE_MAX + 1, 5):
+    _ta = math.radians(_GAUGE_ARC_START + (_t / GAUGE_MAX) * _GAUGE_ARC_SWEEP)
+    _tc, _ts = math.cos(_ta), math.sin(_ta)
+    _TICK_DATA.append((
+        _t,
+        _GAUGE_ARC_START + (_t / GAUGE_MAX) * _GAUGE_ARC_SWEEP,   # degrees for proximity calc
+        int(_GAUGE_CX + _TICK_OUTER * _tc),
+        int(_GAUGE_CY + _TICK_OUTER * _ts),
+        int(_GAUGE_CX + _TICK_INNER * _tc),
+        int(_GAUGE_CY + _TICK_INNER * _ts),
+        (_t % 10 == 0) or _t == GAUGE_MAX,                        # is_major
+    ))
+del _t, _ta, _tc, _ts
 
 # Thread-safe state shared between the data thread and the animation loop
 _lock  = threading.Lock()
@@ -537,8 +564,8 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
     name, severity = alerts[idx]
     color = _ALERT_COLORS.get(severity, _YELLOW)
 
-    # Pulsing warning dot
-    pulse = 0.55 + 0.45 * math.sin(frame * math.pi / (FRAME_RATE * 0.7))
+    # Pulsing warning dot — abs(sin) keeps the dot visible at all times (min 0.38)
+    pulse = 0.38 + 0.62 * abs(math.sin(frame * math.pi / (FRAME_RATE * 0.7)))
     dot_color = tuple(min(255, int(c * pulse)) for c in color)
     d.ellipse([7 * _SS, y_mid - 5 * _SS, 15 * _SS, y_mid + 5 * _SS], fill=dot_color)
 
@@ -654,15 +681,8 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     _draw_wind_streaks(d, cx, cy, r, actual_gust, frame)
 
     # Tick marks — colored by zone; ticks near the needle glow brighter
-    tick_outer  = r - 8  * _SS
-    tick_inner  = r - 18 * _SS
-    needle_deg  = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
-    for mph_val in range(0, GAUGE_MAX + 1, 5):
-        ang = _gauge_ang(mph_val)
-        ca, sa = math.cos(ang), math.sin(ang)
-        x1, y1 = cx + tick_outer * ca, cy + tick_outer * sa
-        x2, y2 = cx + tick_inner * ca, cy + tick_inner * sa
-        is_major = (mph_val % 10 == 0) or mph_val == GAUGE_MAX
+    needle_deg = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
+    for mph_val, tick_deg, x1, y1, x2, y2, is_major in _TICK_DATA:
         t_dim = dim * (0.7 if is_major else 0.45)
         if mph_val <= GOOD_MPH:
             tick_c = _dim(_GREEN, t_dim)
@@ -671,11 +691,10 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         else:
             tick_c = _dim(_RED, t_dim)
         if not stale and needle_gust > 0:
-            tick_deg = _GAUGE_ARC_START + (mph_val / GAUGE_MAX) * _GAUGE_ARC_SWEEP
             prox = max(0.0, 1.0 - abs(tick_deg - needle_deg) / 14.0)
             if prox > 0:
                 tick_c = tuple(min(255, int(c + 110 * prox)) for c in tick_c)
-        d.line([(int(x1), int(y1)), (int(x2), int(y2))],
+        d.line([(x1, y1), (x2, y2)],
                fill=tick_c, width=2 * _SS if is_major else _SS)
 
 
@@ -790,10 +809,9 @@ def render_display(state, frame, needle_gust):
     trend = _trend(history)
 
     img, d = make_image()
-    r  = 70 * _SS
-    # Advisory strip occupies y=0-18; gauge starts 14px below that
-    cy = (18 + 14) * _SS + r + 11 * _SS
-    cx = _W // 2
+    r  = _GAUGE_R
+    cx = _GAUGE_CX
+    cy = _GAUGE_CY
 
     # Pre-compute info_y so the background draws before gauge text
     info_y = cy + int(r * 0.707) + 8 * _SS
@@ -889,7 +907,7 @@ def render_display(state, frame, needle_gust):
         mph_fill  = (180, 180, 180)
     num_str = f"{needle_gust:.0f}"
     num_w   = int(d.textlength(num_str, font=font_gust))
-    unit_w  = int(d.textlength("mph",   font=font_unit))
+    unit_w  = _MPH_UNIT_W
     grp_x   = (_W - num_w - 8 * _SS - unit_w) // 2
     num_top = row_y + 20 * _SS   # start below the info row
     num_y   = num_top + (_H - num_top) // 2   # center in remaining space
@@ -928,7 +946,7 @@ def render_display(state, frame, needle_gust):
     bwave_off   = (frame * 3) % (22 * _SS)
     bwave_row1, bwave_row2 = [], []
     for bx in range(_W):
-        by = _H - 1 - int(3 * _SS * math.sin(2 * math.pi * (bx + bwave_off) / (22 * _SS)))
+        by = _H - 1 - int(3 * _SS * math.sin(_BWAVE_FREQ * (bx + bwave_off)))
         bwave_row1.append((bx, by))
         if by > 0:
             bwave_row2.append((bx, by - 1))
@@ -1178,9 +1196,11 @@ def main():
             # Animated connecting screen — spinning arc + pulsing text
             try:
                 dots   = "." * ((frame // FRAME_RATE) % 4)
-                bright = int(60 + 30 * math.sin(frame * math.pi / (FRAME_RATE * 2)))
+                bright = int(72 + 42 * math.sin(frame * math.pi / (FRAME_RATE * 2)))
+                dim2   = int(bright * 0.62)
+                dim3   = int(bright * 0.84)
                 img, d = make_image()
-                cx_s  = _W // 2
+                cx_s  = _GAUGE_CX
                 spin  = (frame * 14) % 360
                 bc    = (bright, bright, bright)
                 d.arc((cx_s - 30 * _SS, 110 * _SS, cx_s + 30 * _SS, 170 * _SS), spin, spin + 115, fill=bc, width=3 * _SS)
@@ -1192,9 +1212,9 @@ def main():
                 draw_centered(d, 182 * _SS, "PONTOON WIND",
                               (bright, bright, bright), font_title)
                 draw_centered(d, 198 * _SS, "NDBC 41038 · Cape Fear",
-                              (bright // 2, bright // 2, bright // 2), font_label)
+                              (dim2, dim2, dim2), font_label)
                 draw_centered(d, 216 * _SS, f"Connecting{dots}",
-                              (bright - 20, bright - 20, bright - 20), font_data)
+                              (dim3, dim3, dim3), font_data)
                 _show(img)
             except Exception:
                 logging.exception("Connecting screen render failed")
