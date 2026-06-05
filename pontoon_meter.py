@@ -31,6 +31,8 @@ STALE_MINUTES   = 90
 # Composite go/no-go thresholds — wave and temp map onto the same 0–GAUGE_MAX scale as wind
 WAVE_GOOD_FT    = 2.0   # ft — below this is a GO for waves
 WAVE_CAUTION_FT = 3.0   # ft — above this is a NO-GO for waves
+WAVE_CHOP_DPD   = 5.0   # seconds — period below this = short choppy wind chop
+WAVE_SWELL_DPD  = 9.0   # seconds — period above this = long gentle swell
 TEMP_COOL_F     = 65    # °F water — below this starts adding a caution penalty
 TEMP_COLD_F     = 50    # °F water — below this adds a significant penalty
 _SS             = 2     # supersampling scale — render at 2× then BILINEAR downsample to device
@@ -203,7 +205,7 @@ _SEP_Y2   = _INFO_Y - 5 * _SS
 _lock  = threading.Lock()
 _state = {
     "wind": None, "gust": None, "wdir": "---",
-    "age": None, "wtmp": None, "wvht": None, "atmp": None,
+    "age": None, "wtmp": None, "wvht": None, "atmp": None, "dpd": None,
     "gust_history": [],          # most-recent-first list of up to 6 gust readings
     "alerts": [], "error": None,
 }
@@ -860,6 +862,11 @@ def _condition_statuses(state):
     else:
         wvs = "NO-GO"
 
+    # Short-period chop upgrades a borderline GO to CAUTION even at low wave heights
+    dpd = state.get("dpd")
+    if wvs == "GO" and dpd is not None and dpd < WAVE_CHOP_DPD and wvht is not None and wvht >= 1.0:
+        wvs = "CAUTION"
+
     if wtmp is None or float(wtmp) >= TEMP_COOL_F:
         ts = "GO"
     elif float(wtmp) >= TEMP_COLD_F:
@@ -906,6 +913,14 @@ def _composite_score(state):
         temp_eq = max(temp_eq, min(GOOD_MPH,
                       (TEMP_COLD_F - float(atmp)) / 15.0 * GOOD_MPH))
 
+    # DPD modulates wave danger: choppy short-period seas are worse; long gentle swells forgiven
+    dpd = state.get("dpd")
+    if dpd is not None and wvht and wvht > 0:
+        if dpd < WAVE_CHOP_DPD:
+            wave_eq *= 1.20   # short-period chop is rougher on a pontoon
+        elif dpd >= WAVE_SWELL_DPD:
+            wave_eq *= 0.85   # long swell rolls under the boat more gently
+
     # Each condition can independently push the verdict; waves/temp are slightly
     # discounted so a marginal reading alone doesn't trigger NO-GO on its own.
     composite = max(
@@ -929,6 +944,7 @@ def render_display(state, frame, needle_gust, composite):
     wtmp    = state["wtmp"]
     wvht    = state["wvht"]
     atmp    = state["atmp"]
+    dpd     = state["dpd"]
     alerts  = state["alerts"]
     history = state.get("gust_history", [])
 
@@ -1025,7 +1041,7 @@ def render_display(state, frame, needle_gust, composite):
             d.text((8 * _SS + sh, row_y + sh), wt_str, fill=(0, 0, 0), font=font_label, anchor="lm")
             d.text((8 * _SS,      row_y),       wt_str, fill=wt_fill,   font=font_label, anchor="lm")
         if wvht is not None:
-            wv_str  = f"{wvht:.1f}ft waves"
+            wv_str  = (f"{wvht:.1f}ft/{dpd:.0f}s" if dpd is not None else f"{wvht:.1f}ft waves")
             wv_fill = _DOT_C[cond_wave]
             d.text((_W - 8 * _SS + sh, row_y + sh), wv_str, fill=(0, 0, 0), font=font_label, anchor="rm")
             d.text((_W - 8 * _SS,      row_y),       wv_str, fill=wv_fill,   font=font_label, anchor="rm")
@@ -1076,7 +1092,10 @@ def render_display(state, frame, needle_gust, composite):
     if atmp is not None:
         marine_parts.append(f"Air {atmp:.0f}°")
     if wvht is not None:
-        marine_parts.append(f"{wvht:.1f}ft waves")
+        if dpd is not None:
+            marine_parts.append(f"{wvht:.1f}ft {dpd:.0f}s waves")
+        else:
+            marine_parts.append(f"{wvht:.1f}ft waves")
     marine_str = "  ".join(marine_parts) if marine_parts else None
 
     # Pulsing accent strips framing the left/right screen edges
@@ -1177,13 +1196,21 @@ def _data_loop():
             wtmp_raw = row.get("WTMP", "MM")
             wvht_raw = row.get("WVHT", "MM")
             atmp_raw = row.get("ATMP", "MM")
+            dpd_raw  = row.get("DPD",  "MM")
             wtmp = celsius_to_f(float(wtmp_raw)) if wtmp_raw != "MM" else None
             wvht = m_to_ft(float(wvht_raw))      if wvht_raw != "MM" else None
             atmp = celsius_to_f(float(atmp_raw)) if atmp_raw != "MM" else None
+            # DPD: NDBC uses "MM" and "99.00" as missing sentinels
+            try:
+                dpd = float(dpd_raw) if dpd_raw not in ("MM", "99.00") else None
+                if dpd is not None and dpd <= 0:
+                    dpd = None
+            except ValueError:
+                dpd = None
             with _lock:
                 new_history = [gust] + _state["gust_history"][:5]
                 _state.update(wind=wind, gust=gust, wdir=wdir, age=age,
-                              wtmp=wtmp, wvht=wvht, atmp=atmp,
+                              wtmp=wtmp, wvht=wvht, atmp=atmp, dpd=dpd,
                               gust_history=new_history, error=None)
             logging.info("wind=%.1f mph gust=%.1f mph dir=%s age=%sm wtmp=%s wvht=%s",
                          wind, gust, wdir, age,
