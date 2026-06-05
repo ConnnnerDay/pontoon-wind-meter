@@ -939,9 +939,9 @@ def render_display(state, frame, needle_gust, composite):
         dc = _DOT_C[cond] if (has_data and not stale) else (50, 50, 50)
         d.ellipse((dx - dot_r, dot_y - dot_r, dx + dot_r, dot_y + dot_r), fill=dc)
 
-    # Secondary info row — water temp + wave height, tucked just below the band
+    # Secondary info row — water temp | weather alert | wave height
     row_y = _ROW_Y
-    if not stale and (wtmp is not None or wvht is not None):
+    if not stale and (wtmp is not None or wvht is not None or fog_risk or pres_falling):
         # Dark tinted backdrop so text reads over the animated info-section background
         d.rectangle([0, row_y - 9 * _SS, _W - 1, row_y + 9 * _SS],
                     fill=tuple(max(0, c // 4) for c in accent))
@@ -951,6 +951,14 @@ def render_display(state, frame, needle_gust, composite):
             wt_fill = _DOT_C[cond_temp]
             d.text((8 * _SS + sh, row_y + sh), wt_str, fill=(0, 0, 0), font=font_label, anchor="lm")
             d.text((8 * _SS,      row_y),       wt_str, fill=wt_fill,   font=font_label, anchor="lm")
+        # Centre slot: explain why the weather dot is yellow when it's the cause of CAUTION
+        if fog_risk or pres_falling:
+            wx_parts = []
+            if fog_risk:     wx_parts.append("~Fog")
+            if pres_falling: wx_parts.append("↓P")
+            wx_str = "  ".join(wx_parts)
+            d.text((cx + sh, row_y + sh), wx_str, fill=(0, 0, 0),   font=font_label, anchor="mm")
+            d.text((cx,      row_y),       wx_str, fill=_YELLOW,     font=font_label, anchor="mm")
         if wvht is not None:
             wv_str  = (f"{wvht:.1f}ft/{dpd:.0f}s" if dpd is not None else f"{wvht:.1f}ft waves")
             wv_fill = _DOT_C[cond_wave]
