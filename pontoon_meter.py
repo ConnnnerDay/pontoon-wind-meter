@@ -37,6 +37,10 @@ TEMP_COOL_F       = 65    # °F water — below this starts adding a caution pen
 TEMP_COLD_F       = 50    # °F water — below this adds a significant penalty
 PRES_FALL_CAUTION = 1.5   # hPa drop over polling window (>=3 samples) -> CAUTION floor
 FOG_SPREAD_F      = 5.0   # °F air-to-dewpoint spread below this = fog/mist likely
+# Air temperature comfort — separate from water safety thresholds above
+# Hot air: open pontoon handles more wind; cold air: wind chill makes any breeze worse
+ATMP_WARM_F   = 80.0  # °F — above this, warm-day wind relief applies (up to 5 mph equivalent)
+ATMP_CHILLY_F = 62.0  # °F — below this, cold-air comfort penalty applies on open deck
 _SS             = 2     # supersampling scale — render at 2× then BILINEAR downsample to device
 
 # Gauge arc geometry — horseshoe opening at the bottom (PIL degrees)
@@ -768,6 +772,13 @@ def _composite_score(state):
 
     wind_eq = min(float(gust), float(GAUGE_MAX))
 
+    # Hot-day comfort: warm air makes moderate wind feel refreshing, not threatening.
+    # Max 5 mph equivalent relief — enough to shift a warm breezy day from CAUTION to GO
+    # without letting dangerous winds disappear (30 mph is NO-GO regardless of heat).
+    if atmp is not None and atmp > ATMP_WARM_F:
+        warm_relief = min(5.0, (atmp - ATMP_WARM_F) / 20.0 * 5.0)
+        wind_eq = max(0.0, wind_eq - warm_relief)
+
     # Map wave height: WAVE_GOOD_FT → GOOD_MPH, WAVE_CAUTION_FT → CAUTION_MPH
     if wvht is None or wvht <= 0:
         wave_eq = 0.0
@@ -779,15 +790,23 @@ def _composite_score(state):
     else:
         wave_eq = min(GAUGE_MAX, CAUTION_MPH + (wvht - WAVE_CAUTION_FT) * 3.5)
 
-    # Cold water/air adds a caution penalty
+    # Cold water/air safety + comfort penalty
     temp_eq = 0.0
     if wtmp is not None and wtmp < TEMP_COOL_F:
         span = max(1, TEMP_COOL_F - TEMP_COLD_F)
         temp_eq = max(temp_eq, min(CAUTION_MPH,
                       (TEMP_COOL_F - wtmp) / span * CAUTION_MPH))
-    if atmp is not None and atmp < TEMP_COLD_F:
-        temp_eq = max(temp_eq, min(GOOD_MPH,
-                      (TEMP_COLD_F - atmp) / 15.0 * GOOD_MPH))
+    if atmp is not None:
+        if atmp < TEMP_COLD_F:
+            # Safety: near-freezing air — hypothermia risk if anything goes wrong
+            temp_eq = max(temp_eq, min(GOOD_MPH,
+                          (TEMP_COLD_F - atmp) / 15.0 * GOOD_MPH))
+        elif atmp < ATMP_CHILLY_F:
+            # Comfort: open pontoon deck with chilly air (50–62 °F) is unpleasant,
+            # especially once any wind chill is added. Scales up to 0.75×GOOD_MPH
+            # so cold air alone won't force CAUTION but adds pressure when combined.
+            chilly_frac = (ATMP_CHILLY_F - atmp) / (ATMP_CHILLY_F - TEMP_COLD_F)
+            temp_eq = max(temp_eq, chilly_frac * GOOD_MPH * 0.75)
 
     # DPD modulates wave danger: choppy short-period seas are worse; long gentle swells forgiven
     dpd = state.get("dpd")
@@ -918,15 +937,16 @@ def render_display(state, frame, needle_gust, composite):
            font=font_unit, anchor="mm")
 
     # Condition dots — right side of status band (right→left): wind | wave | temp | weather
-    # "weather" dot covers fog risk and falling barometric pressure — makes silent CAUTION visible
+    # "weather" dot covers fog, falling pressure, and chilly air — makes silent CAUTION visible
     _DOT_C = {"GO": _GREEN, "CAUTION": _YELLOW, "NO-GO": _RED}
     fog_risk     = dewp is not None and atmp is not None and (atmp - dewp) < FOG_SPREAD_F
     pres_falling = False
     if pres is not None and len(pres_history) >= 3:
         oldest_p = next((p for p in reversed(pres_history) if p is not None), None)
         pres_falling = oldest_p is not None and (oldest_p - pres) >= PRES_FALL_CAUTION
-    cond_weather  = "CAUTION" if (fog_risk or pres_falling) else "GO"
-    weather_known = dewp is not None or pres is not None
+    cold_air     = atmp is not None and atmp < ATMP_CHILLY_F
+    cond_weather  = "CAUTION" if (fog_risk or pres_falling or cold_air) else "GO"
+    weather_known = dewp is not None or pres is not None or atmp is not None
     dot_r  = 3 * _SS
     dot_y  = band_cy
     for j, (cond, has_data) in enumerate((
@@ -941,7 +961,7 @@ def render_display(state, frame, needle_gust, composite):
 
     # Secondary info row — water temp | weather alert | wave height
     row_y = _ROW_Y
-    if not stale and (wtmp is not None or wvht is not None or fog_risk or pres_falling):
+    if not stale and (wtmp is not None or wvht is not None or fog_risk or pres_falling or cold_air):
         # Dark tinted backdrop so text reads over the animated info-section background
         d.rectangle([0, row_y - 9 * _SS, _W - 1, row_y + 9 * _SS],
                     fill=tuple(max(0, c // 4) for c in accent))
@@ -952,10 +972,11 @@ def render_display(state, frame, needle_gust, composite):
             d.text((8 * _SS + sh, row_y + sh), wt_str, fill=(0, 0, 0), font=font_label, anchor="lm")
             d.text((8 * _SS,      row_y),       wt_str, fill=wt_fill,   font=font_label, anchor="lm")
         # Centre slot: explain why the weather dot is yellow when it's the cause of CAUTION
-        if fog_risk or pres_falling:
+        if fog_risk or pres_falling or cold_air:
             wx_parts = []
             if fog_risk:     wx_parts.append("~Fog")
             if pres_falling: wx_parts.append("↓P")
+            if cold_air:     wx_parts.append(f"Chilly {atmp:.0f}°")
             wx_str = "  ".join(wx_parts)
             d.text((cx + sh, row_y + sh), wx_str, fill=(0, 0, 0),   font=font_label, anchor="mm")
             d.text((cx,      row_y),       wx_str, fill=_YELLOW,     font=font_label, anchor="mm")
