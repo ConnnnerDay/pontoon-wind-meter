@@ -24,9 +24,9 @@ POLL_INTERVAL   = 300   # seconds between NDBC refreshes
 ALERTS_INTERVAL = 600   # seconds between alert refreshes
 FRAME_RATE      = 30    # display frames per second
 WEB_PORT        = 8080  # iframe dashboard HTTP port
-GAUGE_MAX       = 25    # mph, full-scale
-GOOD_MPH        = 12
-CAUTION_MPH     = 18
+GAUGE_MAX       = 30    # mph, full-scale
+GOOD_MPH        = 15
+CAUTION_MPH     = 23
 STALE_MINUTES   = 90
 # Composite go/no-go thresholds — wave and temp map onto the same 0–GAUGE_MAX scale as wind
 WAVE_GOOD_FT    = 2.0   # ft — below this is a GO for waves
