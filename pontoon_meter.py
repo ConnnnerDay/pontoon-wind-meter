@@ -871,9 +871,9 @@ def _condition_statuses(state):
     if wvs == "GO" and dpd is not None and dpd < WAVE_CHOP_DPD and wvht is not None and wvht >= 1.0:
         wvs = "CAUTION"
 
-    if wtmp is None or float(wtmp) >= TEMP_COOL_F:
+    if wtmp is None or wtmp >= TEMP_COOL_F:
         ts = "GO"
-    elif float(wtmp) >= TEMP_COLD_F:
+    elif wtmp >= TEMP_COLD_F:
         ts = "CAUTION"
     else:
         ts = "NO-GO"
@@ -909,13 +909,13 @@ def _composite_score(state):
 
     # Cold water/air adds a caution penalty
     temp_eq = 0.0
-    if wtmp is not None and float(wtmp) < TEMP_COOL_F:
+    if wtmp is not None and wtmp < TEMP_COOL_F:
         span = max(1, TEMP_COOL_F - TEMP_COLD_F)
         temp_eq = max(temp_eq, min(CAUTION_MPH,
-                      (TEMP_COOL_F - float(wtmp)) / span * CAUTION_MPH))
-    if atmp is not None and float(atmp) < TEMP_COLD_F:
+                      (TEMP_COOL_F - wtmp) / span * CAUTION_MPH))
+    if atmp is not None and atmp < TEMP_COLD_F:
         temp_eq = max(temp_eq, min(GOOD_MPH,
-                      (TEMP_COLD_F - float(atmp)) / 15.0 * GOOD_MPH))
+                      (TEMP_COLD_F - atmp) / 15.0 * GOOD_MPH))
 
     # DPD modulates wave danger: choppy short-period seas are worse; long gentle swells forgiven
     dpd = state.get("dpd")
@@ -928,10 +928,8 @@ def _composite_score(state):
     # Fog: tight air-dewpoint spread means near-saturated air (mist/fog likely on the water)
     fog_eq = 0.0
     dewp = state.get("dewp")
-    if atmp is not None and dewp is not None:
-        spread_f = float(atmp) - float(dewp)
-        if spread_f < FOG_SPREAD_F:
-            fog_eq = GOOD_MPH + 0.5   # fog alone always floors at CAUTION
+    if atmp is not None and dewp is not None and (atmp - dewp) < FOG_SPREAD_F:
+        fog_eq = GOOD_MPH + 0.5   # fog alone always floors at CAUTION
 
     # Falling pressure signals incoming weather — adds a caution floor
     pres_eq = 0.0
@@ -1047,12 +1045,24 @@ def render_display(state, frame, needle_gust, composite):
            fill=(60, 60, 60) if stale else (255, 255, 255),
            font=font_unit, anchor="mm")
 
-    # Condition dots — right side of status band: wind | wave | temp (right to left)
+    # Condition dots — right side of status band (right→left): wind | wave | temp | weather
+    # "weather" dot covers fog risk and falling barometric pressure — makes silent CAUTION visible
     _DOT_C = {"GO": _GREEN, "CAUTION": _YELLOW, "NO-GO": _RED}
+    fog_risk     = dewp is not None and atmp is not None and (atmp - dewp) < FOG_SPREAD_F
+    pres_falling = False
+    if pres is not None and len(pres_history) >= 3:
+        oldest_p = next((p for p in reversed(pres_history) if p is not None), None)
+        pres_falling = oldest_p is not None and (oldest_p - pres) >= PRES_FALL_CAUTION
+    cond_weather  = "CAUTION" if (fog_risk or pres_falling) else "GO"
+    weather_known = dewp is not None or pres is not None
     dot_r  = 3 * _SS
     dot_y  = band_cy
-    for j, (cond, has_data) in enumerate(
-            ((cond_wind, True), (cond_wave, wvht is not None), (cond_temp, wtmp is not None))):
+    for j, (cond, has_data) in enumerate((
+            (cond_wind,    True),
+            (cond_wave,    wvht is not None),
+            (cond_temp,    wtmp is not None),
+            (cond_weather, weather_known),
+    )):
         dx = _W - (9 + j * 8) * _SS
         dc = _DOT_C[cond] if (has_data and not stale) else (50, 50, 50)
         d.ellipse((dx - dot_r, dot_y - dot_r, dx + dot_r, dot_y + dot_r), fill=dc)
@@ -1133,7 +1143,7 @@ def render_display(state, frame, needle_gust, composite):
         else:
             p_arrow = ""
         marine_parts.append(f"{pres:.0f}hPa{p_arrow}")
-    if dewp is not None and atmp is not None and (float(atmp) - float(dewp)) < FOG_SPREAD_F:
+    if dewp is not None and atmp is not None and (atmp - dewp) < FOG_SPREAD_F:
         marine_parts.append("~Fog")
     marine_str = "  ".join(marine_parts) if marine_parts else None
 
@@ -1339,6 +1349,7 @@ class _WebHandler(BaseHTTPRequestHandler):
                 s = dict(_state)
                 s["alerts"]       = list(_state["alerts"])
                 s["gust_history"] = list(_state["gust_history"])
+                s["pres_history"] = list(_state["pres_history"])
             if s.get("wind") is not None:
                 c = _composite_score(s)
                 s["status"] = ("GO" if c < GOOD_MPH
