@@ -285,6 +285,29 @@ def _trend(history):
     return "steady"
 
 
+def _relative_humidity(atmp_f, dewp_f):
+    """Approx relative humidity (%) from air temp and dewpoint (°F), Magnus formula."""
+    tc = (atmp_f - 32) * 5 / 9
+    td = (dewp_f - 32) * 5 / 9
+    return max(0.0, min(100.0,
+        100.0 * math.exp(17.625 * td / (243.04 + td))
+              / math.exp(17.625 * tc / (243.04 + tc))))
+
+
+def _heat_index_f(t_f, rh):
+    """Rothfusz heat index (°F). Call only when t_f >= 80 and rh >= 40."""
+    return (-42.379 + 2.04901523*t_f + 10.14333127*rh
+            - 0.22475541*t_f*rh - 0.00683783*t_f**2 - 0.05481717*rh**2
+            + 0.00122874*t_f**2*rh + 0.00085282*t_f*rh**2
+            - 0.00000199*t_f**2*rh**2)
+
+
+def _wind_chill_f(t_f, wind_mph):
+    """NOAA wind chill (°F). Call only when t_f <= 50 and wind_mph >= 3."""
+    return (35.74 + 0.6215*t_f - 35.75*(wind_mph**0.16)
+            + 0.4275*t_f*(wind_mph**0.16))
+
+
 def _draw_trend(d, cx, y, trend):
     """24 px tall directional indicator: up = rising, down = easing, dash = steady."""
     h = 24 * _SS
@@ -461,7 +484,7 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
             clk = 6 * _SS
             d.line([(clk, y_mid), (clk, y_mid - 2 * _SS)], fill=(72, 72, 72), width=_SS)
             d.line([(clk, y_mid), (clk + 2 * _SS, y_mid)], fill=(72, 72, 72), width=_SS)
-            time_str = time.strftime("%H:%M")
+            time_str = time.strftime("%a %H:%M")
             if age_minutes is not None:
                 age_str = f"{int(age_minutes)}m"
                 d.text((cx - 4 * _SS, y_mid), time_str, fill=(128, 128, 128), font=font_strip, anchor="rm")
@@ -866,6 +889,21 @@ def render_display(state, frame, needle_gust, composite):
     alerts       = state["alerts"]
     history      = state.get("gust_history", [])
 
+    # Feels-like temperature — computed once, used by dots, secondary row, and marine strip
+    feels_hi = None   # heat index (°F) when hot + humid
+    feels_wc = None   # wind chill (°F) when cold + windy
+    if atmp is not None and dewp is not None and atmp >= 80:
+        rh = _relative_humidity(atmp, dewp)
+        if rh >= 40:
+            hi = _heat_index_f(atmp, rh)
+            if hi >= atmp + 3:       # only meaningful when notably above air temp
+                feels_hi = hi
+    if atmp is not None and wind is not None and atmp <= 50 and wind >= 3:
+        wc = _wind_chill_f(atmp, wind)
+        if wc <= atmp - 3:           # only meaningful when notably below air temp
+            feels_wc = wc
+    extreme_heat = feels_hi is not None and feels_hi >= 103  # NOAA "Danger" threshold
+
     cond_wind, cond_wave, cond_temp = _condition_statuses(state)
     msg    = ("GO"      if composite < GOOD_MPH
               else "CAUTION" if composite <= CAUTION_MPH
@@ -945,7 +983,7 @@ def render_display(state, frame, needle_gust, composite):
         oldest_p = next((p for p in reversed(pres_history) if p is not None), None)
         pres_falling = oldest_p is not None and (oldest_p - pres) >= PRES_FALL_CAUTION
     cold_air     = atmp is not None and atmp < ATMP_CHILLY_F
-    cond_weather  = "CAUTION" if (fog_risk or pres_falling or cold_air) else "GO"
+    cond_weather  = "CAUTION" if (fog_risk or pres_falling or cold_air or extreme_heat) else "GO"
     weather_known = dewp is not None or pres is not None or atmp is not None
     dot_r  = 3 * _SS
     dot_y  = band_cy
@@ -961,7 +999,8 @@ def render_display(state, frame, needle_gust, composite):
 
     # Secondary info row — water temp | weather alert | wave height
     row_y = _ROW_Y
-    if not stale and (wtmp is not None or wvht is not None or fog_risk or pres_falling or cold_air):
+    if not stale and (wtmp is not None or wvht is not None
+                      or fog_risk or pres_falling or cold_air or extreme_heat):
         # Dark tinted backdrop so text reads over the animated info-section background
         d.rectangle([0, row_y - 9 * _SS, _W - 1, row_y + 9 * _SS],
                     fill=tuple(max(0, c // 4) for c in accent))
@@ -972,11 +1011,12 @@ def render_display(state, frame, needle_gust, composite):
             d.text((8 * _SS + sh, row_y + sh), wt_str, fill=(0, 0, 0), font=font_label, anchor="lm")
             d.text((8 * _SS,      row_y),       wt_str, fill=wt_fill,   font=font_label, anchor="lm")
         # Centre slot: explain why the weather dot is yellow when it's the cause of CAUTION
-        if fog_risk or pres_falling or cold_air:
+        if fog_risk or pres_falling or cold_air or extreme_heat:
             wx_parts = []
-            if fog_risk:     wx_parts.append("~Fog")
-            if pres_falling: wx_parts.append("↓P")
-            if cold_air:     wx_parts.append(f"Chilly {atmp:.0f}°")
+            if fog_risk:      wx_parts.append("~Fog")
+            if pres_falling:  wx_parts.append("↓P")
+            if cold_air:      wx_parts.append(f"Chilly {atmp:.0f}°")
+            if extreme_heat:  wx_parts.append(f"HI {feels_hi:.0f}°!")
             wx_str = "  ".join(wx_parts)
             d.text((cx + sh, row_y + sh), wx_str, fill=(0, 0, 0),   font=font_label, anchor="mm")
             d.text((cx,      row_y),       wx_str, fill=_YELLOW,     font=font_label, anchor="mm")
@@ -1030,7 +1070,12 @@ def render_display(state, frame, needle_gust, composite):
     if wtmp is not None:
         marine_parts.append(f"Water {wtmp:.0f}°")
     if atmp is not None:
-        marine_parts.append(f"Air {atmp:.0f}°")
+        if feels_hi is not None:
+            marine_parts.append(f"Air {atmp:.0f}° / HI {feels_hi:.0f}°")
+        elif feels_wc is not None:
+            marine_parts.append(f"Air {atmp:.0f}° / WC {feels_wc:.0f}°")
+        else:
+            marine_parts.append(f"Air {atmp:.0f}°")
     if wvht is not None:
         if dpd is not None:
             marine_parts.append(f"{wvht:.1f}ft {dpd:.0f}s waves")
