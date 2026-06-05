@@ -228,9 +228,6 @@ _NEEDLE_SPRING  = 0.28  / (FRAME_RATE * 0.20)           # 0.28 at 5fps, 0.047 at
 _frame_lock  = threading.Lock()
 _frame_store = [b""]   # [0] = latest rendered frame as PNG bytes
 
-# Pre-loaded GIF weather icon frames (48px, nearest-neighbor from 160×160 source)
-_GIF_ICON_SIZE = 48
-_GIF_ICONS: dict = {}   # state → list of RGBA PIL Images
 
 
 _show_counter = [0]
@@ -298,48 +295,6 @@ def _draw_trend(d, cx, y, trend):
 
 
 
-def _draw_compass(d, cx, cy, r, wdir_str):
-    """Compact compass rose: dim circle, N tick, and a filled directional arrow."""
-    d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(85, 85, 85), width=_SS)
-    # North tick — tiny mark at the top of the circle
-    d.line([(cx, cy - r + _SS), (cx, cy - r + 4 * _SS)], fill=(125, 125, 125), width=_SS)
-    # Cardinal marks at E, S, W (single dim pixel each)
-    for card_deg in (90, 180, 270):
-        cr = math.radians(card_deg)
-        d.point((int(cx + (r - 1) * math.sin(cr)), int(cy - (r - 1) * math.cos(cr))),
-                fill=(62, 62, 62))
-
-    deg = _COMPASS_DEGREES.get(wdir_str)
-    if deg is None:
-        d.text((cx, cy), "?", fill=(50, 50, 50), font=font_label, anchor="mm")
-        return
-
-    rad = math.radians(deg)
-    sin_r, cos_r = math.sin(rad), math.cos(rad)
-
-    # Arrow tip points where wind comes FROM (meteorological convention)
-    tip_x = cx + (r - 2 * _SS) * sin_r
-    tip_y = cy - (r - 2 * _SS) * cos_r
-    # Arrowhead base sits 40 % of the way from center toward tip
-    base_x = cx + (r * 0.38) * sin_r
-    base_y = cy - (r * 0.38) * cos_r
-    # Perpendicular half-width for the triangular head
-    hw   = 3.0 * _SS
-    pr   = rad + math.pi / 2
-    l_x  = base_x + hw * math.sin(pr);  l_y  = base_y - hw * math.cos(pr)
-    rr_x = base_x - hw * math.sin(pr);  rr_y = base_y + hw * math.cos(pr)
-    # Stem tail extends to the opposite side (shorter)
-    tail_x = cx - (r - 5 * _SS) * sin_r
-    tail_y = cy + (r - 5 * _SS) * cos_r
-
-    d.polygon([(int(tip_x), int(tip_y)), (int(l_x), int(l_y)),
-               (int(rr_x), int(rr_y))], fill=(245, 245, 245))
-    d.line([(int(base_x), int(base_y)), (int(tail_x), int(tail_y))],
-           fill=(155, 155, 155), width=_SS)
-    # Abbreviation in the lower half of the circle
-    d.text((cx, cy + 3 * _SS), wdir_str, fill=(155, 155, 155), font=font_label, anchor="mt")
-
-
 def _draw_wind_streaks(d, cx, cy, r, gust, frame):
     """Animated short dashes flowing along the inner gauge face, speed ∝ wind."""
     speed  = max(2, round(20 - gust * 0.4))
@@ -358,89 +313,6 @@ def _draw_wind_streaks(d, cx, cy, r, gust, frame):
         x1 = int(x0 + hw * cp);  y1 = int(y0 - hw * sp)
         x2 = int(x0 - hw * cp);  y2 = int(y0 + hw * sp)
         d.line([(x1, y1), (x2, y2)], fill=(max(0, bright - 20), max(0, bright - 10), bright), width=2 * _SS)
-
-
-def _draw_weather_icon(d, x, y, status, frame, r=18):
-    """Animated weather icon: breathing sun (GOOD), cloud+rain (CAUTION), double bolt (TOO WINDY)."""
-    if status == "GOOD":
-        breathe = 1 + 0.15 * math.sin(frame * math.pi / FRAME_RATE)
-        disc_r  = max(2 * _SS, int((r - 5 * _SS) * breathe))
-        rot     = (frame * 3) % 360
-        for i in range(8):
-            ang    = math.radians(rot + i * 45)
-            ca, sa = math.cos(ang), math.sin(ang)
-            ray_r  = r if i % 2 == 0 else r - 4 * _SS
-            bright = int(200 + 55 * math.sin(frame * math.pi / FRAME_RATE + i * math.pi / 4))
-            bright = max(140, min(255, bright))
-            x1 = int(x + (disc_r + 2 * _SS) * ca);  y1 = int(y + (disc_r + 2 * _SS) * sa)
-            x2 = int(x + ray_r * ca);                 y2 = int(y + ray_r * sa)
-            d.line([(x1, y1), (x2, y2)], fill=(bright, int(bright * 0.78), 0), width=2 * _SS)
-        d.ellipse((x - disc_r, y - disc_r, x + disc_r, y + disc_r), fill=(255, 200, 20))
-
-    elif status == "CAUTION":
-        pulse = 0.75 + 0.25 * math.sin(frame * math.pi / (FRAME_RATE * 1.5))
-        cc    = tuple(int(c * pulse) for c in (155, 170, 185))
-        for bx, by, br in [(-5*_SS, 2*_SS, 5*_SS), (5*_SS, 2*_SS, 5*_SS), (0, -3*_SS, 7*_SS)]:
-            d.ellipse((x+bx-br, y+by-br, x+bx+br, y+by+br), fill=cc)
-        cloud_base = y + 7 * _SS
-        for i in range(4):
-            dx     = x - 6 * _SS + i * 4 * _SS
-            drop_y = cloud_base + (frame * 2 + i * 3) % (12 * _SS)
-            if drop_y <= y + r - 2 * _SS:
-                alpha = int(180 + 60 * math.sin(frame * math.pi / FRAME_RATE + i * math.pi / 2))
-                d.line([(dx, drop_y), (dx, drop_y + 3 * _SS)],
-                       fill=(70, 130, min(255, alpha)), width=2 * _SS)
-
-    else:   # TOO WINDY — double lightning bolt with speed lines
-        pulse = 0.5 + 0.5 * math.sin(frame * math.pi / (FRAME_RATE * 0.5))
-        lc    = (min(255, int(230 * pulse + 40)), min(255, int(100 * pulse)), 0)
-        dim   = tuple(max(0, int(c * 0.6)) for c in lc)
-        s = _SS
-        d.polygon([(x-s, y-r+2*s), (x+2*s, y-s), (x-3*s, y-s)], fill=dim)
-        d.polygon([(x-5*s, y+r-2*s), (x-2*s, y+s), (x-6*s, y+s)], fill=dim)
-        d.polygon([(x+4*s, y-r+2*s), (x+7*s, y-s), (x+s, y-s)], fill=lc)
-        d.polygon([(x, y+r-2*s), (x+3*s, y+s), (x-3*s, y+s)], fill=lc)
-        for j, (y_off, x_len) in enumerate([(-6, 12), (0, 16), (6, 10)]):
-            lc_j = tuple(int(c * pulse * (1 - j * 0.15)) for c in (180, 180, 180))
-            d.line([(x - r, y + y_off * s), (x - r + x_len * s, y + y_off * s)], fill=lc_j, width=2 * _SS)
-
-
-def _load_gif_icons():
-    """Load and resize weather GIF frames once at startup."""
-    try:
-        _resample = Image.Resampling.LANCZOS
-    except AttributeError:
-        _resample = Image.LANCZOS  # Pillow < 9.1
-    assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-    files = {"GOOD": "clear-day.gif", "CAUTION": "rain.gif", "TOO WINDY": "wind.gif"}
-    for state, fname in files.items():
-        path = os.path.join(assets, fname)
-        if not os.path.exists(path):
-            logging.warning("Weather icon missing: %s", path)
-            continue
-        frames, i = [], 0
-        try:
-            gif = Image.open(path)
-            while True:
-                try:
-                    gif.seek(i)
-                    f = gif.convert("RGBA").resize(
-                        (_GIF_ICON_SIZE * _SS, _GIF_ICON_SIZE * _SS), _resample)
-                    # Key out black background; threshold 30 handles LANCZOS anti-aliased edges
-                    px = [(r, g, b, 0) if r + g + b < 30 else (r, g, b, a)
-                          for r, g, b, a in f.getdata()]
-                    f.putdata(px)
-                    frames.append(f)
-                    i += 1
-                except EOFError:
-                    break
-        except Exception as exc:
-            logging.warning("Cannot load %s: %s", fname, exc)
-            continue
-        if frames:
-            _GIF_ICONS[state] = frames
-            logging.info("GIF icon %s: %d frames at %dpx", state, len(frames), _GIF_ICON_SIZE)
-
 
 def _draw_info_bg(d, y_top, y_bot, status, frame):
     """Animated background texture drawn behind the info-section text."""
