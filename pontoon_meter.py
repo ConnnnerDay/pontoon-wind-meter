@@ -37,6 +37,10 @@ TEMP_COOL_F       = 65    # °F water — below this starts adding a caution pen
 TEMP_COLD_F       = 50    # °F water — below this adds a significant penalty
 PRES_FALL_CAUTION = 1.5   # hPa drop over polling window (>=3 samples) -> CAUTION floor
 FOG_SPREAD_F      = 5.0   # °F air-to-dewpoint spread below this = fog/mist likely
+# Air temperature comfort — separate from water safety thresholds above
+# Hot air: open pontoon handles more wind; cold air: wind chill makes any breeze worse
+ATMP_WARM_F   = 80.0  # °F — above this, warm-day wind relief applies (up to 5 mph equivalent)
+ATMP_CHILLY_F = 62.0  # °F — below this, cold-air comfort penalty applies on open deck
 _SS             = 2     # supersampling scale — render at 2× then BILINEAR downsample to device
 
 # Gauge arc geometry — horseshoe opening at the bottom (PIL degrees)
@@ -228,9 +232,6 @@ _NEEDLE_SPRING  = 0.28  / (FRAME_RATE * 0.20)           # 0.28 at 5fps, 0.047 at
 _frame_lock  = threading.Lock()
 _frame_store = [b""]   # [0] = latest rendered frame as PNG bytes
 
-# Pre-loaded GIF weather icon frames (48px, nearest-neighbor from 160×160 source)
-_GIF_ICON_SIZE = 48
-_GIF_ICONS: dict = {}   # state → list of RGBA PIL Images
 
 
 _show_counter = [0]
@@ -284,6 +285,29 @@ def _trend(history):
     return "steady"
 
 
+def _relative_humidity(atmp_f, dewp_f):
+    """Approx relative humidity (%) from air temp and dewpoint (°F), Magnus formula."""
+    tc = (atmp_f - 32) * 5 / 9
+    td = (dewp_f - 32) * 5 / 9
+    return max(0.0, min(100.0,
+        100.0 * math.exp(17.625 * td / (243.04 + td))
+              / math.exp(17.625 * tc / (243.04 + tc))))
+
+
+def _heat_index_f(t_f, rh):
+    """Rothfusz heat index (°F). Call only when t_f >= 80 and rh >= 40."""
+    return (-42.379 + 2.04901523*t_f + 10.14333127*rh
+            - 0.22475541*t_f*rh - 0.00683783*t_f**2 - 0.05481717*rh**2
+            + 0.00122874*t_f**2*rh + 0.00085282*t_f*rh**2
+            - 0.00000199*t_f**2*rh**2)
+
+
+def _wind_chill_f(t_f, wind_mph):
+    """NOAA wind chill (°F). Call only when t_f <= 50 and wind_mph >= 3."""
+    return (35.74 + 0.6215*t_f - 35.75*(wind_mph**0.16)
+            + 0.4275*t_f*(wind_mph**0.16))
+
+
 def _draw_trend(d, cx, y, trend):
     """24 px tall directional indicator: up = rising, down = easing, dash = steady."""
     h = 24 * _SS
@@ -296,48 +320,6 @@ def _draw_trend(d, cx, y, trend):
         d.line([(cx - 11 * _SS, y + h // 2), (cx + 11 * _SS, y + h // 2)],
                fill=(85, 85, 85), width=3 * _SS)
 
-
-
-def _draw_compass(d, cx, cy, r, wdir_str):
-    """Compact compass rose: dim circle, N tick, and a filled directional arrow."""
-    d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(85, 85, 85), width=_SS)
-    # North tick — tiny mark at the top of the circle
-    d.line([(cx, cy - r + _SS), (cx, cy - r + 4 * _SS)], fill=(125, 125, 125), width=_SS)
-    # Cardinal marks at E, S, W (single dim pixel each)
-    for card_deg in (90, 180, 270):
-        cr = math.radians(card_deg)
-        d.point((int(cx + (r - 1) * math.sin(cr)), int(cy - (r - 1) * math.cos(cr))),
-                fill=(62, 62, 62))
-
-    deg = _COMPASS_DEGREES.get(wdir_str)
-    if deg is None:
-        d.text((cx, cy), "?", fill=(50, 50, 50), font=font_label, anchor="mm")
-        return
-
-    rad = math.radians(deg)
-    sin_r, cos_r = math.sin(rad), math.cos(rad)
-
-    # Arrow tip points where wind comes FROM (meteorological convention)
-    tip_x = cx + (r - 2 * _SS) * sin_r
-    tip_y = cy - (r - 2 * _SS) * cos_r
-    # Arrowhead base sits 40 % of the way from center toward tip
-    base_x = cx + (r * 0.38) * sin_r
-    base_y = cy - (r * 0.38) * cos_r
-    # Perpendicular half-width for the triangular head
-    hw   = 3.0 * _SS
-    pr   = rad + math.pi / 2
-    l_x  = base_x + hw * math.sin(pr);  l_y  = base_y - hw * math.cos(pr)
-    rr_x = base_x - hw * math.sin(pr);  rr_y = base_y + hw * math.cos(pr)
-    # Stem tail extends to the opposite side (shorter)
-    tail_x = cx - (r - 5 * _SS) * sin_r
-    tail_y = cy + (r - 5 * _SS) * cos_r
-
-    d.polygon([(int(tip_x), int(tip_y)), (int(l_x), int(l_y)),
-               (int(rr_x), int(rr_y))], fill=(245, 245, 245))
-    d.line([(int(base_x), int(base_y)), (int(tail_x), int(tail_y))],
-           fill=(155, 155, 155), width=_SS)
-    # Abbreviation in the lower half of the circle
-    d.text((cx, cy + 3 * _SS), wdir_str, fill=(155, 155, 155), font=font_label, anchor="mt")
 
 
 def _draw_wind_streaks(d, cx, cy, r, gust, frame):
@@ -358,89 +340,6 @@ def _draw_wind_streaks(d, cx, cy, r, gust, frame):
         x1 = int(x0 + hw * cp);  y1 = int(y0 - hw * sp)
         x2 = int(x0 - hw * cp);  y2 = int(y0 + hw * sp)
         d.line([(x1, y1), (x2, y2)], fill=(max(0, bright - 20), max(0, bright - 10), bright), width=2 * _SS)
-
-
-def _draw_weather_icon(d, x, y, status, frame, r=18):
-    """Animated weather icon: breathing sun (GOOD), cloud+rain (CAUTION), double bolt (TOO WINDY)."""
-    if status == "GOOD":
-        breathe = 1 + 0.15 * math.sin(frame * math.pi / FRAME_RATE)
-        disc_r  = max(2 * _SS, int((r - 5 * _SS) * breathe))
-        rot     = (frame * 3) % 360
-        for i in range(8):
-            ang    = math.radians(rot + i * 45)
-            ca, sa = math.cos(ang), math.sin(ang)
-            ray_r  = r if i % 2 == 0 else r - 4 * _SS
-            bright = int(200 + 55 * math.sin(frame * math.pi / FRAME_RATE + i * math.pi / 4))
-            bright = max(140, min(255, bright))
-            x1 = int(x + (disc_r + 2 * _SS) * ca);  y1 = int(y + (disc_r + 2 * _SS) * sa)
-            x2 = int(x + ray_r * ca);                 y2 = int(y + ray_r * sa)
-            d.line([(x1, y1), (x2, y2)], fill=(bright, int(bright * 0.78), 0), width=2 * _SS)
-        d.ellipse((x - disc_r, y - disc_r, x + disc_r, y + disc_r), fill=(255, 200, 20))
-
-    elif status == "CAUTION":
-        pulse = 0.75 + 0.25 * math.sin(frame * math.pi / (FRAME_RATE * 1.5))
-        cc    = tuple(int(c * pulse) for c in (155, 170, 185))
-        for bx, by, br in [(-5*_SS, 2*_SS, 5*_SS), (5*_SS, 2*_SS, 5*_SS), (0, -3*_SS, 7*_SS)]:
-            d.ellipse((x+bx-br, y+by-br, x+bx+br, y+by+br), fill=cc)
-        cloud_base = y + 7 * _SS
-        for i in range(4):
-            dx     = x - 6 * _SS + i * 4 * _SS
-            drop_y = cloud_base + (frame * 2 + i * 3) % (12 * _SS)
-            if drop_y <= y + r - 2 * _SS:
-                alpha = int(180 + 60 * math.sin(frame * math.pi / FRAME_RATE + i * math.pi / 2))
-                d.line([(dx, drop_y), (dx, drop_y + 3 * _SS)],
-                       fill=(70, 130, min(255, alpha)), width=2 * _SS)
-
-    else:   # TOO WINDY — double lightning bolt with speed lines
-        pulse = 0.5 + 0.5 * math.sin(frame * math.pi / (FRAME_RATE * 0.5))
-        lc    = (min(255, int(230 * pulse + 40)), min(255, int(100 * pulse)), 0)
-        dim   = tuple(max(0, int(c * 0.6)) for c in lc)
-        s = _SS
-        d.polygon([(x-s, y-r+2*s), (x+2*s, y-s), (x-3*s, y-s)], fill=dim)
-        d.polygon([(x-5*s, y+r-2*s), (x-2*s, y+s), (x-6*s, y+s)], fill=dim)
-        d.polygon([(x+4*s, y-r+2*s), (x+7*s, y-s), (x+s, y-s)], fill=lc)
-        d.polygon([(x, y+r-2*s), (x+3*s, y+s), (x-3*s, y+s)], fill=lc)
-        for j, (y_off, x_len) in enumerate([(-6, 12), (0, 16), (6, 10)]):
-            lc_j = tuple(int(c * pulse * (1 - j * 0.15)) for c in (180, 180, 180))
-            d.line([(x - r, y + y_off * s), (x - r + x_len * s, y + y_off * s)], fill=lc_j, width=2 * _SS)
-
-
-def _load_gif_icons():
-    """Load and resize weather GIF frames once at startup."""
-    try:
-        _resample = Image.Resampling.LANCZOS
-    except AttributeError:
-        _resample = Image.LANCZOS  # Pillow < 9.1
-    assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
-    files = {"GOOD": "clear-day.gif", "CAUTION": "rain.gif", "TOO WINDY": "wind.gif"}
-    for state, fname in files.items():
-        path = os.path.join(assets, fname)
-        if not os.path.exists(path):
-            logging.warning("Weather icon missing: %s", path)
-            continue
-        frames, i = [], 0
-        try:
-            gif = Image.open(path)
-            while True:
-                try:
-                    gif.seek(i)
-                    f = gif.convert("RGBA").resize(
-                        (_GIF_ICON_SIZE * _SS, _GIF_ICON_SIZE * _SS), _resample)
-                    # Key out black background; threshold 30 handles LANCZOS anti-aliased edges
-                    px = [(r, g, b, 0) if r + g + b < 30 else (r, g, b, a)
-                          for r, g, b, a in f.getdata()]
-                    f.putdata(px)
-                    frames.append(f)
-                    i += 1
-                except EOFError:
-                    break
-        except Exception as exc:
-            logging.warning("Cannot load %s: %s", fname, exc)
-            continue
-        if frames:
-            _GIF_ICONS[state] = frames
-            logging.info("GIF icon %s: %d frames at %dpx", state, len(frames), _GIF_ICON_SIZE)
-
 
 def _draw_info_bg(d, y_top, y_bot, status, frame):
     """Animated background texture drawn behind the info-section text."""
@@ -585,7 +484,7 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
             clk = 6 * _SS
             d.line([(clk, y_mid), (clk, y_mid - 2 * _SS)], fill=(72, 72, 72), width=_SS)
             d.line([(clk, y_mid), (clk + 2 * _SS, y_mid)], fill=(72, 72, 72), width=_SS)
-            time_str = time.strftime("%H:%M")
+            time_str = time.strftime("%a %H:%M")
             if age_minutes is not None:
                 age_str = f"{int(age_minutes)}m"
                 d.text((cx - 4 * _SS, y_mid), time_str, fill=(128, 128, 128), font=font_strip, anchor="rm")
@@ -871,9 +770,9 @@ def _condition_statuses(state):
     if wvs == "GO" and dpd is not None and dpd < WAVE_CHOP_DPD and wvht is not None and wvht >= 1.0:
         wvs = "CAUTION"
 
-    if wtmp is None or float(wtmp) >= TEMP_COOL_F:
+    if wtmp is None or wtmp >= TEMP_COOL_F:
         ts = "GO"
-    elif float(wtmp) >= TEMP_COLD_F:
+    elif wtmp >= TEMP_COLD_F:
         ts = "CAUTION"
     else:
         ts = "NO-GO"
@@ -896,6 +795,13 @@ def _composite_score(state):
 
     wind_eq = min(float(gust), float(GAUGE_MAX))
 
+    # Hot-day comfort: warm air makes moderate wind feel refreshing, not threatening.
+    # Max 5 mph equivalent relief — enough to shift a warm breezy day from CAUTION to GO
+    # without letting dangerous winds disappear (30 mph is NO-GO regardless of heat).
+    if atmp is not None and atmp > ATMP_WARM_F:
+        warm_relief = min(5.0, (atmp - ATMP_WARM_F) / 20.0 * 5.0)
+        wind_eq = max(0.0, wind_eq - warm_relief)
+
     # Map wave height: WAVE_GOOD_FT → GOOD_MPH, WAVE_CAUTION_FT → CAUTION_MPH
     if wvht is None or wvht <= 0:
         wave_eq = 0.0
@@ -907,15 +813,23 @@ def _composite_score(state):
     else:
         wave_eq = min(GAUGE_MAX, CAUTION_MPH + (wvht - WAVE_CAUTION_FT) * 3.5)
 
-    # Cold water/air adds a caution penalty
+    # Cold water/air safety + comfort penalty
     temp_eq = 0.0
-    if wtmp is not None and float(wtmp) < TEMP_COOL_F:
+    if wtmp is not None and wtmp < TEMP_COOL_F:
         span = max(1, TEMP_COOL_F - TEMP_COLD_F)
         temp_eq = max(temp_eq, min(CAUTION_MPH,
-                      (TEMP_COOL_F - float(wtmp)) / span * CAUTION_MPH))
-    if atmp is not None and float(atmp) < TEMP_COLD_F:
-        temp_eq = max(temp_eq, min(GOOD_MPH,
-                      (TEMP_COLD_F - float(atmp)) / 15.0 * GOOD_MPH))
+                      (TEMP_COOL_F - wtmp) / span * CAUTION_MPH))
+    if atmp is not None:
+        if atmp < TEMP_COLD_F:
+            # Safety: near-freezing air — hypothermia risk if anything goes wrong
+            temp_eq = max(temp_eq, min(GOOD_MPH,
+                          (TEMP_COLD_F - atmp) / 15.0 * GOOD_MPH))
+        elif atmp < ATMP_CHILLY_F:
+            # Comfort: open pontoon deck with chilly air (50–62 °F) is unpleasant,
+            # especially once any wind chill is added. Scales up to 0.75×GOOD_MPH
+            # so cold air alone won't force CAUTION but adds pressure when combined.
+            chilly_frac = (ATMP_CHILLY_F - atmp) / (ATMP_CHILLY_F - TEMP_COLD_F)
+            temp_eq = max(temp_eq, chilly_frac * GOOD_MPH * 0.75)
 
     # DPD modulates wave danger: choppy short-period seas are worse; long gentle swells forgiven
     dpd = state.get("dpd")
@@ -928,10 +842,8 @@ def _composite_score(state):
     # Fog: tight air-dewpoint spread means near-saturated air (mist/fog likely on the water)
     fog_eq = 0.0
     dewp = state.get("dewp")
-    if atmp is not None and dewp is not None:
-        spread_f = float(atmp) - float(dewp)
-        if spread_f < FOG_SPREAD_F:
-            fog_eq = GOOD_MPH + 0.5   # fog alone always floors at CAUTION
+    if atmp is not None and dewp is not None and (atmp - dewp) < FOG_SPREAD_F:
+        fog_eq = GOOD_MPH + 0.5   # fog alone always floors at CAUTION
 
     # Falling pressure signals incoming weather — adds a caution floor
     pres_eq = 0.0
@@ -976,6 +888,21 @@ def render_display(state, frame, needle_gust, composite):
     pres_history = state.get("pres_history") or []
     alerts       = state["alerts"]
     history      = state.get("gust_history", [])
+
+    # Feels-like temperature — computed once, used by dots, secondary row, and marine strip
+    feels_hi = None   # heat index (°F) when hot + humid
+    feels_wc = None   # wind chill (°F) when cold + windy
+    if atmp is not None and dewp is not None and atmp >= 80:
+        rh = _relative_humidity(atmp, dewp)
+        if rh >= 40:
+            hi = _heat_index_f(atmp, rh)
+            if hi >= atmp + 3:       # only meaningful when notably above air temp
+                feels_hi = hi
+    if atmp is not None and wind is not None and atmp <= 50 and wind >= 3:
+        wc = _wind_chill_f(atmp, wind)
+        if wc <= atmp - 3:           # only meaningful when notably below air temp
+            feels_wc = wc
+    extreme_heat = feels_hi is not None and feels_hi >= 103  # NOAA "Danger" threshold
 
     cond_wind, cond_wave, cond_temp = _condition_statuses(state)
     msg    = ("GO"      if composite < GOOD_MPH
@@ -1047,19 +974,33 @@ def render_display(state, frame, needle_gust, composite):
            fill=(60, 60, 60) if stale else (255, 255, 255),
            font=font_unit, anchor="mm")
 
-    # Condition dots — right side of status band: wind | wave | temp (right to left)
+    # Condition dots — right side of status band (right→left): wind | wave | temp | weather
+    # "weather" dot covers fog, falling pressure, and chilly air — makes silent CAUTION visible
     _DOT_C = {"GO": _GREEN, "CAUTION": _YELLOW, "NO-GO": _RED}
+    fog_risk     = dewp is not None and atmp is not None and (atmp - dewp) < FOG_SPREAD_F
+    pres_falling = False
+    if pres is not None and len(pres_history) >= 3:
+        oldest_p = next((p for p in reversed(pres_history) if p is not None), None)
+        pres_falling = oldest_p is not None and (oldest_p - pres) >= PRES_FALL_CAUTION
+    cold_air     = atmp is not None and atmp < ATMP_CHILLY_F
+    cond_weather  = "CAUTION" if (fog_risk or pres_falling or cold_air or extreme_heat) else "GO"
+    weather_known = dewp is not None or pres is not None or atmp is not None
     dot_r  = 3 * _SS
     dot_y  = band_cy
-    for j, (cond, has_data) in enumerate(
-            ((cond_wind, True), (cond_wave, wvht is not None), (cond_temp, wtmp is not None))):
+    for j, (cond, has_data) in enumerate((
+            (cond_wind,    True),
+            (cond_wave,    wvht is not None),
+            (cond_temp,    wtmp is not None),
+            (cond_weather, weather_known),
+    )):
         dx = _W - (9 + j * 8) * _SS
         dc = _DOT_C[cond] if (has_data and not stale) else (50, 50, 50)
         d.ellipse((dx - dot_r, dot_y - dot_r, dx + dot_r, dot_y + dot_r), fill=dc)
 
-    # Secondary info row — water temp + wave height, tucked just below the band
+    # Secondary info row — water temp | weather alert | wave height
     row_y = _ROW_Y
-    if not stale and (wtmp is not None or wvht is not None):
+    if not stale and (wtmp is not None or wvht is not None
+                      or fog_risk or pres_falling or cold_air or extreme_heat):
         # Dark tinted backdrop so text reads over the animated info-section background
         d.rectangle([0, row_y - 9 * _SS, _W - 1, row_y + 9 * _SS],
                     fill=tuple(max(0, c // 4) for c in accent))
@@ -1069,6 +1010,16 @@ def render_display(state, frame, needle_gust, composite):
             wt_fill = _DOT_C[cond_temp]
             d.text((8 * _SS + sh, row_y + sh), wt_str, fill=(0, 0, 0), font=font_label, anchor="lm")
             d.text((8 * _SS,      row_y),       wt_str, fill=wt_fill,   font=font_label, anchor="lm")
+        # Centre slot: explain why the weather dot is yellow when it's the cause of CAUTION
+        if fog_risk or pres_falling or cold_air or extreme_heat:
+            wx_parts = []
+            if fog_risk:      wx_parts.append("~Fog")
+            if pres_falling:  wx_parts.append("↓P")
+            if cold_air:      wx_parts.append(f"Chilly {atmp:.0f}°")
+            if extreme_heat:  wx_parts.append(f"HI {feels_hi:.0f}°!")
+            wx_str = "  ".join(wx_parts)
+            d.text((cx + sh, row_y + sh), wx_str, fill=(0, 0, 0),   font=font_label, anchor="mm")
+            d.text((cx,      row_y),       wx_str, fill=_YELLOW,     font=font_label, anchor="mm")
         if wvht is not None:
             wv_str  = (f"{wvht:.1f}ft/{dpd:.0f}s" if dpd is not None else f"{wvht:.1f}ft waves")
             wv_fill = _DOT_C[cond_wave]
@@ -1119,7 +1070,12 @@ def render_display(state, frame, needle_gust, composite):
     if wtmp is not None:
         marine_parts.append(f"Water {wtmp:.0f}°")
     if atmp is not None:
-        marine_parts.append(f"Air {atmp:.0f}°")
+        if feels_hi is not None:
+            marine_parts.append(f"Air {atmp:.0f}° / HI {feels_hi:.0f}°")
+        elif feels_wc is not None:
+            marine_parts.append(f"Air {atmp:.0f}° / WC {feels_wc:.0f}°")
+        else:
+            marine_parts.append(f"Air {atmp:.0f}°")
     if wvht is not None:
         if dpd is not None:
             marine_parts.append(f"{wvht:.1f}ft {dpd:.0f}s waves")
@@ -1133,7 +1089,7 @@ def render_display(state, frame, needle_gust, composite):
         else:
             p_arrow = ""
         marine_parts.append(f"{pres:.0f}hPa{p_arrow}")
-    if dewp is not None and atmp is not None and (float(atmp) - float(dewp)) < FOG_SPREAD_F:
+    if dewp is not None and atmp is not None and (atmp - dewp) < FOG_SPREAD_F:
         marine_parts.append("~Fog")
     marine_str = "  ".join(marine_parts) if marine_parts else None
 
@@ -1339,6 +1295,7 @@ class _WebHandler(BaseHTTPRequestHandler):
                 s = dict(_state)
                 s["alerts"]       = list(_state["alerts"])
                 s["gust_history"] = list(_state["gust_history"])
+                s["pres_history"] = list(_state["pres_history"])
             if s.get("wind") is not None:
                 c = _composite_score(s)
                 s["status"] = ("GO" if c < GOOD_MPH
