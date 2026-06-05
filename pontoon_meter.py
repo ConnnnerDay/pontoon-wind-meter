@@ -125,6 +125,9 @@ font_big    = _load_bold(64  * _SS)
 
 # Pre-measure constant text widths — avoids one textlength() call per frame
 _MPH_UNIT_W = int(ImageDraw.Draw(Image.new("RGB", (1, 1))).textlength("mph", font=font_unit))
+# Pre-measure every integer gust label 0–55 mph so render_display never calls textlength()
+_GUST_WIDTHS = {i: int(ImageDraw.Draw(Image.new("RGB", (1, 1))).textlength(str(i), font=font_gust))
+                for i in range(56)}
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -813,6 +816,36 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     d.ellipse((cx - h3, cy - h3, cx + h3, cy + h3), fill=hub_c)
 
 
+def _condition_statuses(state):
+    """Return (wind_status, wave_status, temp_status) each as 'GO'/'CAUTION'/'NO-GO'."""
+    gust = state.get("gust") or 0.0
+    wvht = state.get("wvht")
+    wtmp = state.get("wtmp")
+
+    if gust < GOOD_MPH:
+        ws = "GO"
+    elif gust <= CAUTION_MPH:
+        ws = "CAUTION"
+    else:
+        ws = "NO-GO"
+
+    if wvht is None or wvht < WAVE_GOOD_FT:
+        wvs = "GO"
+    elif wvht <= WAVE_CAUTION_FT:
+        wvs = "CAUTION"
+    else:
+        wvs = "NO-GO"
+
+    if wtmp is None or float(wtmp) >= TEMP_COOL_F:
+        ts = "GO"
+    elif float(wtmp) >= TEMP_COLD_F:
+        ts = "CAUTION"
+    else:
+        ts = "NO-GO"
+
+    return ws, wvs, ts
+
+
 def _composite_score(state):
     """Weighted go/no-go score on the 0–GAUGE_MAX scale.
 
@@ -864,7 +897,7 @@ def _composite_score(state):
     return min(composite, GAUGE_MAX)
 
 
-def render_display(state, frame, needle_gust):
+def render_display(state, frame, needle_gust, composite):
     wind    = state["wind"]
     gust    = state["gust"]
     wdir    = state["wdir"]
@@ -875,7 +908,7 @@ def render_display(state, frame, needle_gust):
     alerts  = state["alerts"]
     history = state.get("gust_history", [])
 
-    composite = _composite_score(state)
+    cond_wind, cond_wave, cond_temp = _condition_statuses(state)
     msg    = ("GO"      if composite < GOOD_MPH
               else "CAUTION" if composite <= CAUTION_MPH
               else "NO-GO")
@@ -945,24 +978,33 @@ def render_display(state, frame, needle_gust):
            fill=(60, 60, 60) if stale else (255, 255, 255),
            font=font_unit, anchor="mm")
 
+    # Condition dots — right side of status band: wind | wave | temp (right to left)
+    _DOT_C = {"GO": _GREEN, "CAUTION": _YELLOW, "NO-GO": _RED}
+    dot_r  = 3 * _SS
+    dot_y  = band_cy
+    for j, (cond, has_data) in enumerate(
+            ((cond_wind, True), (cond_wave, wvht is not None), (cond_temp, wtmp is not None))):
+        dx = _W - (9 + j * 8) * _SS
+        dc = _DOT_C[cond] if (has_data and not stale) else (50, 50, 50)
+        d.ellipse((dx - dot_r, dot_y - dot_r, dx + dot_r, dot_y + dot_r), fill=dc)
+
     # Secondary info row — water temp + wave height, tucked just below the band
     row_y = _ROW_Y
     if not stale and (wtmp is not None or wvht is not None):
         # Dark tinted backdrop so text reads over the animated info-section background
         d.rectangle([0, row_y - 9 * _SS, _W - 1, row_y + 9 * _SS],
                     fill=tuple(max(0, c // 4) for c in accent))
-        # Normalize accent to ~200 peak brightness so text is always legible
-        peak_ch = max(accent) or 1
-        ctc = tuple(min(255, int(c * 200 // peak_ch)) for c in accent)
         sh = _SS  # 1 device shadow offset
         if wtmp is not None:
-            wt_str = f"{wtmp:.0f}° water"
+            wt_str  = f"{wtmp:.0f}° water"
+            wt_fill = _DOT_C[cond_temp]
             d.text((8 * _SS + sh, row_y + sh), wt_str, fill=(0, 0, 0), font=font_label, anchor="lm")
-            d.text((8 * _SS,      row_y),       wt_str, fill=ctc,       font=font_label, anchor="lm")
+            d.text((8 * _SS,      row_y),       wt_str, fill=wt_fill,   font=font_label, anchor="lm")
         if wvht is not None:
-            wv_str = f"{wvht:.1f}ft waves"
+            wv_str  = f"{wvht:.1f}ft waves"
+            wv_fill = _DOT_C[cond_wave]
             d.text((_W - 8 * _SS + sh, row_y + sh), wv_str, fill=(0, 0, 0), font=font_label, anchor="rm")
-            d.text((_W - 8 * _SS,      row_y),       wv_str, fill=ctc,       font=font_label, anchor="rm")
+            d.text((_W - 8 * _SS,      row_y),       wv_str, fill=wv_fill,   font=font_label, anchor="rm")
 
     # Big gust number — vertically centered in remaining space below info row
     if stale:
@@ -977,8 +1019,9 @@ def render_display(state, frame, needle_gust):
     else:
         gust_fill = (240, 240, 240)
         mph_fill  = (180, 180, 180)
-    num_str = f"{needle_gust:.0f}"
-    num_w   = int(d.textlength(num_str, font=font_gust))
+    gust_int = min(55, max(0, round(gust)))
+    num_str  = str(gust_int)
+    num_w    = _GUST_WIDTHS[gust_int]
     unit_w  = _MPH_UNIT_W
     grp_x   = (_W - num_w - 8 * _SS - unit_w) // 2
     num_top = row_y + 20 * _SS   # start below the info row
@@ -1239,12 +1282,13 @@ def main():
             snap["gust_history"]  = list(_state["gust_history"])
 
         if snap["wind"] is not None:
-            # Spring-damper: needle chases composite go/no-go score, not raw wind
-            diff = _composite_score(snap) - _needle_gust
+            # Compute composite once — used for spring target and rendering
+            snap_composite = _composite_score(snap)
+            diff = snap_composite - _needle_gust
             _needle_vel  = max(-6.0, min(6.0, _needle_vel * _NEEDLE_DAMPING + diff * _NEEDLE_SPRING))
             _needle_gust = max(0.0, min(GAUGE_MAX + 3, _needle_gust + _needle_vel))
             try:
-                render_display(snap, frame, _needle_gust)
+                render_display(snap, frame, _needle_gust, snap_composite)
             except Exception:
                 logging.exception("Render failed")
         elif snap["error"] is not None:
