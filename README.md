@@ -148,30 +148,7 @@ pytest test_ndbc.py -v
 
 ---
 
-## Notes
-
-This project is intentionally lightweight:
-
-* Low power consumption
-* Simple hardware
-* Easy field deployment
-* Marine environment usability
 
 The goal is not to replace official marine forecasts, but to provide a quick visual go / no-go indicator for local recreational boating conditions.
 
----
 
-## Planned Improvements
-
-* Touchscreen support
-* Tide data
-* Multiple buoy selection
-* Waterproof enclosure
-* Battery-powered portable version
-* Sunlight-readable display options
-
----
-
-## License
-
-MIT License
