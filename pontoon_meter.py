@@ -36,6 +36,7 @@ WAVE_SWELL_DPD  = 9.0   # seconds — period above this = long gentle swell
 TEMP_COOL_F       = 65    # °F water — below this starts adding a caution penalty
 TEMP_COLD_F       = 50    # °F water — below this adds a significant penalty
 PRES_FALL_CAUTION = 1.5   # hPa drop over polling window (>=3 samples) -> CAUTION floor
+FOG_SPREAD_F      = 5.0   # °F air-to-dewpoint spread below this = fog/mist likely
 _SS             = 2     # supersampling scale — render at 2× then BILINEAR downsample to device
 
 # Gauge arc geometry — horseshoe opening at the bottom (PIL degrees)
@@ -207,6 +208,7 @@ _lock  = threading.Lock()
 _state = {
     "wind": None, "gust": None, "wdir": "---",
     "age": None, "wtmp": None, "wvht": None, "atmp": None, "dpd": None,
+    "dewp": None,                       # dewpoint temperature (°F); None = missing
     "pres": None, "pres_history": [],   # most-recent-first barometric pressure (hPa)
     "gust_history": [],                 # most-recent-first list of up to 6 gust readings
     "alerts": [], "error": None,
@@ -923,6 +925,14 @@ def _composite_score(state):
         elif dpd >= WAVE_SWELL_DPD:
             wave_eq *= 0.85   # long swell rolls under the boat more gently
 
+    # Fog: tight air-dewpoint spread means near-saturated air (mist/fog likely on the water)
+    fog_eq = 0.0
+    dewp = state.get("dewp")
+    if atmp is not None and dewp is not None:
+        spread_f = float(atmp) - float(dewp)
+        if spread_f < FOG_SPREAD_F:
+            fog_eq = GOOD_MPH + 0.5   # fog alone always floors at CAUTION
+
     # Falling pressure signals incoming weather — adds a caution floor
     pres_eq = 0.0
     pres_history = state.get("pres_history") or []
@@ -942,6 +952,7 @@ def _composite_score(state):
         wave_eq * 0.75,   # waves: 4 ft -> 16 (CAUTION); >4.5 ft -> NO-GO
         temp_eq * 0.80,   # temp: 45F water -> CAUTION; warmer = smaller penalty
         pres_eq,          # falling pressure: floor near CAUTION for rapid drops
+        fog_eq,           # tight dewpoint spread: fog/mist = always CAUTION
     )
 
     # Active alerts -> hard floor just inside caution zone
@@ -960,6 +971,7 @@ def render_display(state, frame, needle_gust, composite):
     wvht    = state["wvht"]
     atmp    = state["atmp"]
     dpd          = state["dpd"]
+    dewp         = state["dewp"]
     pres         = state["pres"]
     pres_history = state.get("pres_history") or []
     alerts       = state["alerts"]
@@ -1121,6 +1133,8 @@ def render_display(state, frame, needle_gust, composite):
         else:
             p_arrow = ""
         marine_parts.append(f"{pres:.0f}hPa{p_arrow}")
+    if dewp is not None and atmp is not None and (float(atmp) - float(dewp)) < FOG_SPREAD_F:
+        marine_parts.append("~Fog")
     marine_str = "  ".join(marine_parts) if marine_parts else None
 
     # Pulsing accent strips framing the left/right screen edges
@@ -1222,9 +1236,11 @@ def _data_loop():
             wvht_raw = row.get("WVHT", "MM")
             atmp_raw = row.get("ATMP", "MM")
             dpd_raw  = row.get("DPD",  "MM")
+            dewp_raw = row.get("DEWP", "MM")
             wtmp = celsius_to_f(float(wtmp_raw)) if wtmp_raw != "MM" else None
             wvht = m_to_ft(float(wvht_raw))      if wvht_raw != "MM" else None
             atmp = celsius_to_f(float(atmp_raw)) if atmp_raw != "MM" else None
+            dewp = celsius_to_f(float(dewp_raw)) if dewp_raw != "MM" else None
             # DPD: NDBC uses "MM" and "99.00" as missing sentinels
             try:
                 dpd = float(dpd_raw) if dpd_raw not in ("MM", "99.00") else None
@@ -1245,13 +1261,16 @@ def _data_loop():
                 )
                 _state.update(wind=wind, gust=gust, wdir=wdir, age=age,
                               wtmp=wtmp, wvht=wvht, atmp=atmp, dpd=dpd,
-                              pres=pres, pres_history=new_pres_history,
+                              dewp=dewp, pres=pres, pres_history=new_pres_history,
                               gust_history=new_history, error=None)
-            logging.info("wind=%.1f mph gust=%.1f mph dir=%s age=%sm wtmp=%s wvht=%s pres=%s",
-                         wind, gust, wdir, age,
-                         f"{wtmp:.1f}°F" if wtmp is not None else "MM",
-                         f"{wvht:.1f}ft" if wvht is not None else "MM",
-                         f"{pres:.1f}hPa" if pres is not None else "MM")
+            logging.info(
+                "wind=%.1f mph gust=%.1f mph dir=%s age=%sm wtmp=%s wvht=%s pres=%s dewp=%s",
+                wind, gust, wdir, age,
+                f"{wtmp:.1f}°F" if wtmp is not None else "MM",
+                f"{wvht:.1f}ft" if wvht is not None else "MM",
+                f"{pres:.1f}hPa" if pres is not None else "MM",
+                f"{dewp:.1f}°F" if dewp is not None else "MM",
+            )
         except Exception as e:
             logging.error("NDBC fetch failed: %s", e)
             with _lock:
