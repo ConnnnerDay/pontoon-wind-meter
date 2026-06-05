@@ -28,6 +28,11 @@ GAUGE_MAX       = 25    # mph, full-scale
 GOOD_MPH        = 12
 CAUTION_MPH     = 18
 STALE_MINUTES   = 90
+# Composite go/no-go thresholds — wave and temp map onto the same 0–GAUGE_MAX scale as wind
+WAVE_GOOD_FT    = 2.0   # ft — below this is a GO for waves
+WAVE_CAUTION_FT = 3.0   # ft — above this is a NO-GO for waves
+TEMP_COOL_F     = 65    # °F water — below this starts adding a caution penalty
+TEMP_COLD_F     = 50    # °F water — below this adds a significant penalty
 _SS             = 2     # supersampling scale — render at 2× then BILINEAR downsample to device
 
 # Gauge arc geometry — horseshoe opening at the bottom (PIL degrees)
@@ -44,9 +49,9 @@ _YELLOW = (235, 190, 0)
 _RED    = (235, 65, 55)
 
 _STATUS_CONFIG = {
-    "GOOD":      (_GREEN,  (0, 80, 32)),
-    "CAUTION":   (_YELLOW, (90, 72, 0)),
-    "TOO WINDY": (_RED,    (95, 20, 16)),
+    "GO":      (_GREEN,  (0, 80, 32)),
+    "CAUTION": (_YELLOW, (90, 72, 0)),
+    "NO-GO":   (_RED,    (95, 20, 16)),
 }
 
 _ALERT_COLORS = {
@@ -412,7 +417,7 @@ def _load_gif_icons():
 
 def _draw_info_bg(d, y_top, y_bot, status, frame):
     """Animated background texture drawn behind the info-section text."""
-    if status == "GOOD":
+    if status == "GO":
         scroll = (frame * 2) % (80 * _SS)
         for i, (wy_off, wc, wl_i, amp_i) in enumerate(_GOOD_WAVE_PARAMS):
             wy = y_top + wy_off * _SS
@@ -605,7 +610,7 @@ def _gauge_ang(mph_val):
     return math.radians(_GAUGE_ARC_START + (mph_val / GAUGE_MAX) * _GAUGE_ARC_SWEEP)
 
 
-def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind=None, history=None):
+def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind=None, history=None, raw_gust=None):
     """270-degree horseshoe gauge: arc opens at the bottom; needle, streaks, ticks, labels."""
     box = (cx - r, cy - r, cx + r, cy + r)
     arc_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
@@ -691,8 +696,8 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         if na_end > CAUTION_ARC_END:
             d.arc(box, CAUTION_ARC_END, na_end, fill=(255, 80, 80), width=4 * _SS)
 
-    # Animated wind streaks flowing inside the arc face
-    _draw_wind_streaks(d, cx, cy, r, actual_gust, frame)
+    # Animated wind streaks flowing inside the arc face — speed tracks actual wind
+    _draw_wind_streaks(d, cx, cy, r, raw_gust if raw_gust is not None else actual_gust, frame)
 
     # Tick marks — colored by zone; ticks near the needle glow brighter
     needle_deg = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
@@ -712,10 +717,11 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
                fill=tick_c, width=2 * _SS if is_major else _SS)
 
 
-    # Peak gust marker — bright tick just outside the arc at session-max position
+    # Peak gust marker — bright tick just outside the arc at session-max wind position
     if history and len(history) >= 2 and not stale:
         peak = max(history)
-        if peak > actual_gust + 0.3:
+        cur  = raw_gust if raw_gust is not None else actual_gust
+        if peak > cur + 0.3:
             p_ang  = _gauge_ang(min(peak, GAUGE_MAX))
             p_ca, p_sa = math.cos(p_ang), math.sin(p_ang)
             po = (cx + (r + 4 * _SS) * p_ca, cy + (r + 4 * _SS) * p_sa)
@@ -807,6 +813,57 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     d.ellipse((cx - h3, cy - h3, cx + h3, cy + h3), fill=hub_c)
 
 
+def _composite_score(state):
+    """Weighted go/no-go score on the 0–GAUGE_MAX scale.
+
+    Wind gust is primary (55%).  Wave height, water temperature, and active
+    NOAA alerts each contribute the remainder.  Any active alert forces the
+    result to at least the GOOD/CAUTION boundary.
+    """
+    gust   = state.get("gust") or 0.0
+    wvht   = state.get("wvht")
+    wtmp   = state.get("wtmp")
+    atmp   = state.get("atmp")
+    alerts = state.get("alerts") or []
+
+    wind_eq = min(float(gust), float(GAUGE_MAX))
+
+    # Map wave height: WAVE_GOOD_FT → GOOD_MPH, WAVE_CAUTION_FT → CAUTION_MPH
+    if wvht is None or wvht <= 0:
+        wave_eq = 0.0
+    elif wvht <= WAVE_GOOD_FT:
+        wave_eq = (wvht / WAVE_GOOD_FT) * GOOD_MPH
+    elif wvht <= WAVE_CAUTION_FT:
+        t = (wvht - WAVE_GOOD_FT) / (WAVE_CAUTION_FT - WAVE_GOOD_FT)
+        wave_eq = GOOD_MPH + t * (CAUTION_MPH - GOOD_MPH)
+    else:
+        wave_eq = min(GAUGE_MAX, CAUTION_MPH + (wvht - WAVE_CAUTION_FT) * 3.5)
+
+    # Cold water/air adds a caution penalty
+    temp_eq = 0.0
+    if wtmp is not None and float(wtmp) < TEMP_COOL_F:
+        span = max(1, TEMP_COOL_F - TEMP_COLD_F)
+        temp_eq = max(temp_eq, min(CAUTION_MPH,
+                      (TEMP_COOL_F - float(wtmp)) / span * CAUTION_MPH))
+    if atmp is not None and float(atmp) < TEMP_COLD_F:
+        temp_eq = max(temp_eq, min(GOOD_MPH,
+                      (TEMP_COLD_F - float(atmp)) / 15.0 * GOOD_MPH))
+
+    # Each condition can independently push the verdict; waves/temp are slightly
+    # discounted so a marginal reading alone doesn't trigger NO-GO on its own.
+    composite = max(
+        wind_eq,          # wind: full weight — 20 mph alone = NO-GO
+        wave_eq * 0.75,   # waves: 4 ft -> 16 (CAUTION); >4.5 ft -> NO-GO
+        temp_eq * 0.80,   # temp: 45F water -> CAUTION; warmer = smaller penalty
+    )
+
+    # Active alerts -> hard floor just inside caution zone
+    if alerts:
+        composite = max(composite, GOOD_MPH + 0.5)
+
+    return min(composite, GAUGE_MAX)
+
+
 def render_display(state, frame, needle_gust):
     wind    = state["wind"]
     gust    = state["gust"]
@@ -818,9 +875,10 @@ def render_display(state, frame, needle_gust):
     alerts  = state["alerts"]
     history = state.get("gust_history", [])
 
-    msg    = ("GOOD" if gust < GOOD_MPH
-              else "CAUTION" if gust <= CAUTION_MPH
-              else "TOO WINDY")
+    composite = _composite_score(state)
+    msg    = ("GO"      if composite < GOOD_MPH
+              else "CAUTION" if composite <= CAUTION_MPH
+              else "NO-GO")
     accent = _STATUS_CONFIG[msg][0]
 
     trend = _trend(history)
@@ -847,7 +905,7 @@ def render_display(state, frame, needle_gust):
                 d.arc((cx - h_off, cy - h_off, cx + h_off, cy + h_off),
                       _GAUGE_ARC_START - 8, halo_end + 8, fill=hc, width=2 * _SS)
 
-    _draw_gauge(d, cx, cy, r, needle_gust, gust, frame, stale=stale, wind=wind, history=history)
+    _draw_gauge(d, cx, cy, r, needle_gust, composite, frame, stale=stale, wind=wind, history=history, raw_gust=gust)
 
     # Data freshness bar — centered horizontal line in the gauge mouth gap
     if age is not None:
@@ -879,7 +937,7 @@ def render_display(state, frame, needle_gust):
     edge_c  = tuple(min(255, int(c * edge_p)) for c in accent) if not stale else (55, 55, 55)
     d.line([(0, band_y0), (_W - 1, band_y0)], fill=edge_c, width=2 * _SS)
     d.line([(0, band_y1), (_W - 1, band_y1)], fill=tuple(c // 2 for c in edge_c), width=_SS)
-    vib_x  = [-1 * _SS, 0, 1 * _SS, 0][frame % 4] if msg == "TOO WINDY" and not stale else 0
+    vib_x  = [-1 * _SS, 0, 1 * _SS, 0][frame % 4] if msg == "NO-GO" and not stale else 0
     band_cy = band_y0 + band_h // 2
     if not stale:
         d.text((cx + vib_x + _SS, band_cy + _SS), msg, fill=(0, 0, 0), font=font_unit, anchor="mm")
@@ -1129,11 +1187,13 @@ class _WebHandler(BaseHTTPRequestHandler):
                 s = dict(_state)
                 s["alerts"]       = list(_state["alerts"])
                 s["gust_history"] = list(_state["gust_history"])
-            g = s.get("gust")
-            s["status"] = ("GOOD"      if g is not None and g < GOOD_MPH
-                           else "CAUTION"   if g is not None and g <= CAUTION_MPH
-                           else "TOO WINDY" if g is not None
-                           else "OFFLINE")
+            if s.get("wind") is not None:
+                c = _composite_score(s)
+                s["status"] = ("GO" if c < GOOD_MPH
+                               else "CAUTION" if c <= CAUTION_MPH
+                               else "NO-GO")
+            else:
+                s["status"] = "OFFLINE"
             s["stale"]  = s.get("age") is not None and s["age"] >= STALE_MINUTES
             s["trend"]  = _trend(s["gust_history"])
             s["alerts"] = [[a, b] for a, b in s["alerts"]]
@@ -1179,8 +1239,8 @@ def main():
             snap["gust_history"]  = list(_state["gust_history"])
 
         if snap["wind"] is not None:
-            # Spring-damper: natural overshoot and settle like a real needle
-            diff = snap["gust"] - _needle_gust
+            # Spring-damper: needle chases composite go/no-go score, not raw wind
+            diff = _composite_score(snap) - _needle_gust
             _needle_vel  = max(-6.0, min(6.0, _needle_vel * _NEEDLE_DAMPING + diff * _NEEDLE_SPRING))
             _needle_gust = max(0.0, min(GAUGE_MAX + 3, _needle_gust + _needle_vel))
             try:
