@@ -147,6 +147,20 @@ _MARINE_WAVE_FREQ = 2 * math.pi / (55 * _SS)   # reused by _draw_marine_wave
 _BWAVE_FREQ       = 2 * math.pi / (22 * _SS)   # bottom accent wave frequency
 _EDGE_FADE_BASE   = [(3 * _SS - x) / (3.0 * _SS) for x in range(3 * _SS)]
 
+# Sine lookup tables — replace per-pixel trig with integer indexing each frame
+# Bottom wave: 22×SS-pixel period → 44-entry table
+_BWAVE_PERIOD      = 22 * _SS
+_BWAVE_TABLE       = [int(3 * _SS * math.sin(_BWAVE_FREQ * x)) for x in range(_BWAVE_PERIOD)]
+# Alert-strip marine wave: 55×SS-pixel period → 110-entry table
+_MARINE_PERIOD     = 55 * _SS
+_MARINE_WAVE_TABLE = [int(3 * _SS * math.sin(_MARINE_WAVE_FREQ * x)) for x in range(_MARINE_PERIOD)]
+# GOOD-state info waves: one table per wavelength
+_GOOD_WAVE_PERIODS = [wl_i * _SS for (_, _, wl_i, _) in _GOOD_WAVE_PARAMS]
+_GOOD_WAVE_TABLES  = [
+    [int(amp_i * _SS * math.sin(_GOOD_WAVE_FREQS[i] * x)) for x in range(_GOOD_WAVE_PERIODS[i])]
+    for i, (_, _, wl_i, amp_i) in enumerate(_GOOD_WAVE_PARAMS)
+]
+
 # Gauge layout — cx/cy/r are the same every frame; centralise here so _TICK_DATA stays in sync
 _GAUGE_R  = 70 * _SS
 _GAUGE_CX = _W // 2
@@ -426,12 +440,10 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
             wy = y_top + wy_off * _SS
             if wy >= y_bot:
                 continue
-            ph     = i * 17 * _SS
-            freq   = _GOOD_WAVE_FREQS[i]
-            amp_ss = amp_i * _SS
-            base   = scroll + ph
-            pts  = [(px, wy + int(amp_ss * math.sin(freq * (px + base))))
-                    for px in range(_W + 1)]
+            period = _GOOD_WAVE_PERIODS[i]
+            table  = _GOOD_WAVE_TABLES[i]
+            base   = (scroll + i * 17 * _SS) % period
+            pts    = [(px, wy + table[(px + base) % period]) for px in range(_W + 1)]
             d.line(pts, fill=wc, width=_SS)
 
         # Floating upward particles — slow drift gives GOOD state a lively feel
@@ -460,7 +472,7 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
                 continue
             bright = 100 + int(60 * math.sin(
                 frame * math.pi / (FRAME_RATE * 1.5) + i * math.pi / 5))
-            rc = (int(bright * 0.25), int(bright * 0.38), int(bright * 0.72))
+            rc = (int(bright * 0.18), int(bright * 0.32), int(bright * 0.90))
             d.line([(x0, y0c), (x1, y1c)], fill=rc, width=2 * _SS)
             # Splash V-mark when drop reaches the bottom of the info section
             if y1 >= y_bot - 5 * _SS:
@@ -509,9 +521,8 @@ def _draw_info_bg(d, y_top, y_bot, status, frame):
 
 def _draw_marine_wave(d, frame, color, y_mid):
     """Scrolling sine wave shown in the bottom strip when no alerts are active."""
-    amplitude = 3 * _SS
-    offset    = (frame * 2) % (55 * _SS)
-    pts = [(x, y_mid + int(amplitude * math.sin(_MARINE_WAVE_FREQ * (x + offset))))
+    offset = (frame * 2) % _MARINE_PERIOD
+    pts = [(x, y_mid + _MARINE_WAVE_TABLE[(x + offset) % _MARINE_PERIOD])
            for x in range(_W + 1)]
     d.line(pts, fill=color, width=_SS)
 
@@ -1037,7 +1048,10 @@ def render_display(state, frame, needle_gust, composite):
 
     # Wind + trend shown in the advisory strip (cycling with marine / clock)
     dir_tag  = f"  {wdir}" if wdir else ""
-    wind_str = f"Wind {wind:.1f} mph{dir_tag}"
+    if gust is not None and wind is not None and abs(gust - wind) > 1.0:
+        wind_str = f"Gust {gust:.0f}  Wind {wind:.0f} mph{dir_tag}"
+    else:
+        wind_str = f"Wind {wind:.0f} mph{dir_tag}"
     if trend is not None:
         arrow = "↑" if trend == "up" else ("↓" if trend == "down" else "→")
         wind_str += f" {arrow}"
@@ -1055,19 +1069,19 @@ def render_display(state, frame, needle_gust, composite):
     # Pulsing accent strips framing the left/right screen edges
     _draw_edge_accents(d, accent, frame)
 
-    # Animated wave at screen bottom — completes the edge framing (2px tall)
-    accent_dim  = tuple(c // 4 for c in accent)
+    # Animated wave at screen bottom — table lookup replaces per-pixel sin(); 3-row depth
+    accent_dim  = tuple(c // 4  for c in accent)
     accent_dim2 = tuple(c // 10 for c in accent)
-    bwave_off   = (frame * 3) % (22 * _SS)
-    bwave_row1, bwave_row2 = [], []
-    for bx in range(_W):
-        by = _H - 1 - int(3 * _SS * math.sin(_BWAVE_FREQ * (bx + bwave_off)))
-        bwave_row1.append((bx, by))
-        if by > 0:
-            bwave_row2.append((bx, by - 1))
+    accent_dim3 = tuple(c // 22 for c in accent)
+    bwave_off   = (frame * 3) % _BWAVE_PERIOD
+    bwave_row1  = [(bx, _H - 1 - _BWAVE_TABLE[(bx + bwave_off) % _BWAVE_PERIOD]) for bx in range(_W)]
+    bwave_row2  = [(bx, by - 1) for bx, by in bwave_row1 if by > 0]
+    bwave_row3  = [(bx, by - 2) for bx, by in bwave_row1 if by > 1]
     d.line(bwave_row1, fill=accent_dim)
     if bwave_row2:
         d.line(bwave_row2, fill=accent_dim2)
+    if bwave_row3:
+        d.line(bwave_row3, fill=accent_dim3)
 
 
     # Top strip: NOAA advisories → wind → marine → clock/wave
