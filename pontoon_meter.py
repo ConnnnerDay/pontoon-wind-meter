@@ -160,6 +160,10 @@ _GOOD_WAVE_TABLES  = [
     [int(amp_i * _SS * math.sin(_GOOD_WAVE_FREQS[i] * x)) for x in range(_GOOD_WAVE_PERIODS[i])]
     for i, (_, _, wl_i, amp_i) in enumerate(_GOOD_WAVE_PARAMS)
 ]
+# Sunburst: precomputed (cos, sin) at 30° intervals — rotation formula reduces 12 trig
+# calls per GO frame to 1 base call + 12 multiply-add pairs
+_SUNBURST_C = [math.cos(math.radians(i * 30)) for i in range(12)]
+_SUNBURST_S = [math.sin(math.radians(i * 30)) for i in range(12)]
 
 # Gauge layout — cx/cy/r are the same every frame; centralise here so _TICK_DATA stays in sync
 _GAUGE_R  = 70 * _SS
@@ -646,12 +650,19 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(36, 36, 36), width=14 * _SS)
     d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(24, 24, 24), width= 6 * _SS)
 
-    # GOOD-state inner sunburst — dim rotating rays in the clear interior of the gauge face
+    # GOOD-state inner glow + sunburst — drawn into the clear face of the horseshoe
     if not stale and actual_gust < GOOD_MPH:
-        ray_rot = (frame * 1.5) % 360
+        # Soft pulsing green disc in the gauge interior
+        glow_r = 55 * _SS
+        glow_p = 0.10 + 0.06 * abs(math.sin(frame * math.pi / (FRAME_RATE * 3.0)))
+        d.ellipse((cx - glow_r, cy - glow_r, cx + glow_r, cy + glow_r),
+                  fill=(0, int(185 * glow_p), int(80 * glow_p)))
+        # Rotating rays — 1 trig call for base angle, then rotation matrix for each ray
+        ray_r = math.radians((frame * 2.5) % 360)
+        bc, bs = math.cos(ray_r), math.sin(ray_r)
         for i in range(12):
-            ang_r = math.radians(ray_rot + i * 30)
-            ca_r, sa_r = math.cos(ang_r), math.sin(ang_r)
+            ca_r = bc * _SUNBURST_C[i] - bs * _SUNBURST_S[i]
+            sa_r = bs * _SUNBURST_C[i] + bc * _SUNBURST_S[i]
             b = int(12 + 8 * math.sin(frame * math.pi / (FRAME_RATE * 2.5) + i * math.pi / 6))
             d.line([
                 (int(cx + 20 * _SS * ca_r), int(cy + 20 * _SS * sa_r)),
@@ -759,6 +770,8 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         wx = int(cx + (r - 10 * _SS) * w_ca)
         wy = int(cy + (r - 10 * _SS) * w_sa)
         ds = 4 * _SS
+        # Dark disc backdrop so the diamond reads cleanly over the colored arc
+        d.ellipse((wx - 7 * _SS, wy - 7 * _SS, wx + 7 * _SS, wy + 7 * _SS), fill=(10, 10, 10))
         d.polygon([(wx, wy - ds), (wx + ds, wy), (wx, wy + ds), (wx - ds, wy)],
                   fill=(45, 45, 45), outline=(178, 178, 178))
 
@@ -766,7 +779,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     pct = min(max(needle_gust / GAUGE_MAX, 0), 1)
     ang = _gauge_ang(pct * GAUGE_MAX)
     if not stale and actual_gust > CAUTION_MPH:
-        ang += math.radians(1.5 * math.sin(frame * math.pi / (FRAME_RATE * 0.10)))
+        ang += math.radians(2.5 * math.sin(frame * math.pi / (FRAME_RATE * 0.10)))
     if not stale and needle_gust > 0.1:
         glow_ang = _GAUGE_ARC_START + (needle_gust / GAUGE_MAX) * _GAUGE_ARC_SWEEP
         glow_c   = ((0, 36, 18) if needle_gust < GOOD_MPH
@@ -1341,11 +1354,11 @@ def main():
                 d.arc((cx_s - 18 * _SS, 122 * _SS, cx_s + 18 * _SS, 158 * _SS), spin2, spin2 + 80,
                       fill=(bright // 3, bright // 3, bright // 3), width=2 * _SS)
                 draw_centered(d, 182 * _SS, "PONTOON WIND",
-                              (bright, bright, bright), font_title)
+                              (int(bright * 0.60), bright, int(bright * 0.72)), font_title)
                 draw_centered(d, 198 * _SS, "NDBC 41038 · Cape Fear",
-                              (dim2, dim2, dim2), font_label)
+                              (int(dim2 * 0.55), int(dim2 * 0.75), dim2), font_label)
                 draw_centered(d, 216 * _SS, f"Connecting{dots}",
-                              (dim3, dim3, dim3), font_data)
+                              (dim3 // 2, dim3 // 2, dim3 // 2), font_data)
                 _show(img)
             except Exception:
                 logging.exception("Connecting screen render failed")
