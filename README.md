@@ -37,6 +37,39 @@ A 2.4" SPI TFT display shows a color-zoned speedometer gauge, current wind and g
 
 ---
 
+## Configuration
+
+All thresholds, location details, and polling intervals live in **`config.yaml`** next to the scripts.  Edit that file and restart the service — no code changes needed.
+
+```yaml
+location:
+  ndbc_station: "41038"   # change to switch buoys
+  lat: 34.2108
+  lon: -77.5986
+
+thresholds:
+  good_mph:    15   # below this → GO (green)
+  caution_mph: 23   # 15–23 mph  → CAUTION (yellow); above → NO-GO (red)
+```
+
+### Environment variable overrides
+
+Every threshold can also be set via a `PONTOON_` env var — useful for quick experiments or remote management without touching the file:
+
+```bash
+PONTOON_GOOD_MPH=12 PONTOON_CAUTION_MPH=20 python pontoon_meter.py
+```
+
+### Command-line overrides
+
+```bash
+python pontoon_meter.py --good-mph 12 --caution-mph 20 --config myconfig.yaml
+```
+
+Run `python pontoon_meter.py --help` for the full list.
+
+---
+
 ## Go / No-Go Logic
 
 | Status   | Gust speed   | Arc color |
@@ -45,7 +78,7 @@ A 2.4" SPI TFT display shows a color-zoned speedometer gauge, current wind and g
 | CAUTION  | 15 – 23 mph  | Yellow    |
 | NO-GO    | Over 23 mph  | Red       |
 
-Wind is the primary factor (55% weight). The composite score also factors in wave height, water temperature, barometric pressure trend, fog risk, heat index, and wind chill. Change `GOOD_MPH` and `CAUTION_MPH` at the top of `pontoon_meter.py` to adjust the thresholds.
+Wind is the primary factor. The composite score also factors in wave height, water temperature, barometric pressure trend, fog risk, heat index, and wind chill. Adjust thresholds in `config.yaml`.
 
 ---
 
@@ -110,8 +143,8 @@ pip install luma.core luma.lcd "Pillow>=8.2"
 ### Deploy the Scripts
 
 ```bash
-cp pontoon_meter.py ndbc.py locations.py ~/
-cp -r data ~/
+cp pontoon_meter.py ndbc.py locations.py config.py config.yaml ~/
+cp -r data ui ~/
 ```
 
 ---
@@ -143,11 +176,11 @@ journalctl -u pontoon-meter.service -f
 
 ## Running Tests
 
-Tests cover NDBC parsing and unit conversion functions and run on any machine — no Pi or display hardware required.
+Tests cover NDBC parsing, unit conversion, configuration loading, and Go/No-Go scoring.  They run on any machine — no Pi or display hardware required.
 
 ```bash
-pip install pytest        # or: pip install -r requirements-dev.txt
-pytest test_ndbc.py -v
+pip install -r requirements-dev.txt
+pytest test_ndbc.py test_config.py test_logic.py -v
 ```
 
 ---
