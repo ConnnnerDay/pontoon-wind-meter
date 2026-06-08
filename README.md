@@ -29,11 +29,62 @@ A 2.4" SPI TFT display shows a color-zoned speedometer gauge, current wind and g
 * Alert names shown in the top strip with a pulsing dot colored by severity
 * Cycles through multiple simultaneous alerts with a page indicator
 
+**Offline / cache**
+* Every successful NOAA fetch is saved atomically to a JSON file on disk
+* When the network is unavailable the last cached snapshot is loaded automatically — the display keeps showing the last known conditions with a small amber **CACHED** badge in the status band
+* Cached data older than 3 hours (configurable) is considered too stale to use and is ignored
+
 **Architecture**
 * Background data thread refreshes NDBC and NOAA alerts on independent timers; animation loop runs at 30 fps and never blocks on network I/O
 * Thread-safe state snapshot with `threading.Lock()`
 * Auto-retries failed fetches (up to 3 attempts with 5-second back-off)
 * Graceful shutdown — clears display on SIGTERM/SIGINT
+
+---
+
+## Configuration
+
+All thresholds, location details, and polling intervals live in **`config.yaml`** next to the scripts.  Edit that file and restart the service — no code changes needed.
+
+```yaml
+location:
+  ndbc_station: "41038"   # change to switch buoys
+  lat: 34.2108
+  lon: -77.5986
+
+thresholds:
+  good_mph:    15   # below this → GO (green)
+  caution_mph: 23   # 15–23 mph  → CAUTION (yellow); above → NO-GO (red)
+```
+
+### Environment variable overrides
+
+Every threshold can also be set via a `PONTOON_` env var — useful for quick experiments or remote management without touching the file:
+
+```bash
+PONTOON_GOOD_MPH=12 PONTOON_CAUTION_MPH=20 python pontoon_meter.py
+```
+
+### Command-line overrides
+
+```bash
+python pontoon_meter.py --good-mph 12 --caution-mph 20 --config myconfig.yaml
+```
+
+Run `python pontoon_meter.py --help` for the full list.
+
+### Cache configuration
+
+```yaml
+cache:
+  enabled:         true
+  path:            "/home/pizero/.cache/pontoon-meter/latest_snapshot.json"
+  max_age_minutes: 180   # ignore snapshots older than this
+```
+
+Environment variable overrides: `PONTOON_CACHE_ENABLED`, `PONTOON_CACHE_PATH`, `PONTOON_CACHE_MAX_AGE_MINUTES`.
+
+Disable the cache entirely for a single run: `python pontoon_meter.py --no-cache`
 
 ---
 
@@ -45,7 +96,7 @@ A 2.4" SPI TFT display shows a color-zoned speedometer gauge, current wind and g
 | CAUTION  | 15 – 23 mph  | Yellow    |
 | NO-GO    | Over 23 mph  | Red       |
 
-Wind is the primary factor (55% weight). The composite score also factors in wave height, water temperature, barometric pressure trend, fog risk, heat index, and wind chill. Change `GOOD_MPH` and `CAUTION_MPH` at the top of `pontoon_meter.py` to adjust the thresholds.
+Wind is the primary factor. The composite score also factors in wave height, water temperature, barometric pressure trend, fog risk, heat index, and wind chill. Adjust thresholds in `config.yaml`.
 
 ---
 
@@ -107,19 +158,34 @@ source ~/tftenv/bin/activate
 pip install luma.core luma.lcd "Pillow>=8.2"
 ```
 
-### Deploy the Scripts
+### Deploy the Scripts (manual)
 
 ```bash
-cp pontoon_meter.py ndbc.py locations.py ~/
-cp -r data ~/
+cp -r . /home/pizero/pontoon-wind-meter/
 ```
+
+### Deploy with the install script (recommended)
+
+The `scripts/install_service.sh` script handles everything in one step:
+
+```bash
+sudo bash scripts/install_service.sh
+```
+
+It will:
+1. Stop the existing service (if running)
+2. Copy all project files to `/home/pizero/pontoon-wind-meter`
+3. Install/update Python packages into `/home/pizero/tftenv`
+4. Install the systemd unit and reload the daemon
+5. Enable and restart the service
+6. Print the final service status
 
 ---
 
 ## Running Manually
 
 ```bash
-/home/pizero/tftenv/bin/python /home/pizero/pontoon_meter.py
+/home/pizero/tftenv/bin/python /home/pizero/pontoon-wind-meter/pontoon_meter.py
 ```
 
 ---
@@ -143,11 +209,32 @@ journalctl -u pontoon-meter.service -f
 
 ## Running Tests
 
-Tests cover NDBC parsing and unit conversion functions and run on any machine — no Pi or display hardware required.
+Tests cover NDBC parsing, unit conversion, configuration loading, Go/No-Go scoring, and the disk cache.  They run on any machine — no Pi or display hardware required.
 
 ```bash
-pip install pytest        # or: pip install -r requirements-dev.txt
-pytest test_ndbc.py -v
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+---
+
+## Troubleshooting
+
+```bash
+# Check service status
+systemctl status pontoon-meter.service
+
+# Follow live logs
+journalctl -u pontoon-meter.service -f
+
+# View the last cached snapshot
+cat /home/pizero/.cache/pontoon-meter/latest_snapshot.json
+
+# Remove the cache if it is corrupt or you want a clean start
+rm /home/pizero/.cache/pontoon-meter/latest_snapshot.json
+
+# Restart the service after editing config.yaml
+sudo systemctl restart pontoon-meter.service
 ```
 
 ---

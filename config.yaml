@@ -1,0 +1,56 @@
+# Pontoon Wind Meter — configuration
+#
+# Edit this file to change thresholds, location, or polling intervals.
+# The application loads it at startup; restart the service after editing.
+#
+# All values have built-in defaults matching the original constants, so any
+# section can be omitted and the default will be used.
+
+location:
+  name:          "Wrightsville Beach / ICW"
+  ndbc_station:  "41038"
+  coops_station: "8658120"   # NOAA CO-OPS tide-gauge station (Wilmington, NC)
+  lat:           34.2108
+  lon:          -77.5986
+
+thresholds:
+  # Wind speed (mph) — controls gauge zone colours and GO / CAUTION / NO-GO verdict
+  good_mph:    15      # below this  → GO   (green)
+  caution_mph: 23      # 15–23 mph   → CAUTION (yellow); above → NO-GO (red)
+  gauge_max:   30      # full-scale gauge value
+
+  # Data freshness — readings older than this are shown as "STALE"
+  stale_minutes: 90
+
+  # Wave thresholds (feet and seconds)
+  wave_good_ft:    2.0   # below this  → GO for waves
+  wave_caution_ft: 3.0   # above this  → NO-GO for waves
+  wave_chop_dpd:   5.0   # dominant period < this = short choppy swell (penalised)
+  wave_swell_dpd:  9.0   # dominant period ≥ this = long gentle swell (forgiven)
+
+  # Water temperature (°F)
+  temp_cool_f: 65    # below this starts adding a caution penalty
+  temp_cold_f: 50    # below this adds a significant cold-water penalty
+
+  # Air temperature comfort (°F) — open pontoon deck
+  atmp_warm_f:   80.0  # above this, warm-day wind relief applies (up to 5 mph equiv.)
+  atmp_chilly_f: 62.0  # below this, cold-air comfort penalty applies
+
+  # Fog risk — air-to-dewpoint spread below this suggests fog / mist on the water
+  fog_spread_f: 5.0
+
+  # Falling pressure — hPa drop over the polling window that triggers a CAUTION floor
+  pres_fall_caution: 1.5
+
+polling:
+  poll_interval:    300   # seconds between NDBC data refreshes (5 min)
+  alerts_interval:  600   # seconds between Weather.gov alert refreshes (10 min)
+  frame_rate:       30    # display frames per second
+  web_port:         8080  # HTTP dashboard port
+
+cache:
+  # When enabled, every successful NOAA fetch is written to disk so the app
+  # can show the last known conditions during a network outage.
+  enabled:          true
+  path:             "/home/pizero/.cache/pontoon-meter/latest_snapshot.json"
+  max_age_minutes:  180   # snapshots older than this are considered too stale to use
