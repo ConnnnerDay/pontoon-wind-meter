@@ -1,13 +1,13 @@
 [Unit]
-Description=Pontoon wind meter TFT display
+Description=Pontoon Wind Meter TFT display
 After=network-online.target time-sync.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=pizero
-WorkingDirectory=/home/pizero
-ExecStart=/home/pizero/tftenv/bin/python /home/pizero/pontoon_meter.py
+WorkingDirectory=/home/pizero/pontoon-wind-meter
+ExecStart=/home/pizero/tftenv/bin/python /home/pizero/pontoon-wind-meter/pontoon_meter.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -15,6 +15,11 @@ StandardError=journal
 Environment=PYTHONUNBUFFERED=1
 TimeoutStartSec=30
 TimeoutStopSec=5
+
+# Create the cache directory before the process starts.
+# disk_cache.py also creates it on first write, but doing it here ensures
+# correct ownership without requiring root inside the service.
+ExecStartPre=/bin/mkdir -p /home/pizero/.cache/pontoon-meter
 
 [Install]
 WantedBy=multi-user.target

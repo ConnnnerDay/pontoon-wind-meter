@@ -51,6 +51,7 @@ _state = {
     "pres": None, "pres_history": [],
     "gust_history": [],
     "alerts": [], "error": None,
+    "cached": False,   # True when the display is showing disk-cached data
 }
 
 # Animation-loop-only needle state (no lock needed)
@@ -163,12 +164,36 @@ signal.signal(signal.SIGINT,  handle_exit)
 
 
 # ---------------------------------------------------------------------------
+# Startup diagnostics
+# ---------------------------------------------------------------------------
+
+def _log_startup_info() -> None:
+    """Emit a structured startup banner so every run is easy to trace in journald."""
+    logging.info("=" * 60)
+    logging.info("Pontoon Wind Meter — starting up")
+    logging.info("  Location   : %s", cfg["location_name"])
+    logging.info("  NDBC       : station %s  → %s", cfg["ndbc_station"], URL)
+    logging.info("  CO-OPS     : station %s (water-temp fallback)", cfg["coops_station"])
+    logging.info("  Alerts     : %s", ALERTS_URL)
+    logging.info("  Poll       : NDBC every %ds, alerts every %ds",
+                 cfg["poll_interval"], cfg["alerts_interval"])
+    logging.info("  Display    : %d fps, web on :%d", cfg["frame_rate"], cfg["web_port"])
+    if cfg.get("cache_enabled"):
+        logging.info("  Cache      : enabled — %s (max age %dm)",
+                     cfg["cache_path"], cfg["cache_max_age_minutes"])
+    else:
+        logging.info("  Cache      : disabled")
+    logging.info("=" * 60)
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
 def main():
     global _needle_gust, _needle_vel
 
+    _log_startup_info()
     _start_web_server()
     threading.Thread(
         target=_data_loop_fn,

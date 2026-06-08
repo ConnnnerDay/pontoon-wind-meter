@@ -47,3 +47,10 @@ polling:
   alerts_interval:  600   # seconds between Weather.gov alert refreshes (10 min)
   frame_rate:       30    # display frames per second
   web_port:         8080  # HTTP dashboard port
+
+cache:
+  # When enabled, every successful NOAA fetch is written to disk so the app
+  # can show the last known conditions during a network outage.
+  enabled:          true
+  path:             "/home/pizero/.cache/pontoon-meter/latest_snapshot.json"
+  max_age_minutes:  180   # snapshots older than this are considered too stale to use

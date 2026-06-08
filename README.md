@@ -29,6 +29,11 @@ A 2.4" SPI TFT display shows a color-zoned speedometer gauge, current wind and g
 * Alert names shown in the top strip with a pulsing dot colored by severity
 * Cycles through multiple simultaneous alerts with a page indicator
 
+**Offline / cache**
+* Every successful NOAA fetch is saved atomically to a JSON file on disk
+* When the network is unavailable the last cached snapshot is loaded automatically — the display keeps showing the last known conditions with a small amber **CACHED** badge in the status band
+* Cached data older than 3 hours (configurable) is considered too stale to use and is ignored
+
 **Architecture**
 * Background data thread refreshes NDBC and NOAA alerts on independent timers; animation loop runs at 30 fps and never blocks on network I/O
 * Thread-safe state snapshot with `threading.Lock()`
@@ -67,6 +72,19 @@ python pontoon_meter.py --good-mph 12 --caution-mph 20 --config myconfig.yaml
 ```
 
 Run `python pontoon_meter.py --help` for the full list.
+
+### Cache configuration
+
+```yaml
+cache:
+  enabled:         true
+  path:            "/home/pizero/.cache/pontoon-meter/latest_snapshot.json"
+  max_age_minutes: 180   # ignore snapshots older than this
+```
+
+Environment variable overrides: `PONTOON_CACHE_ENABLED`, `PONTOON_CACHE_PATH`, `PONTOON_CACHE_MAX_AGE_MINUTES`.
+
+Disable the cache entirely for a single run: `python pontoon_meter.py --no-cache`
 
 ---
 
@@ -140,19 +158,34 @@ source ~/tftenv/bin/activate
 pip install luma.core luma.lcd "Pillow>=8.2"
 ```
 
-### Deploy the Scripts
+### Deploy the Scripts (manual)
 
 ```bash
-cp pontoon_meter.py ndbc.py locations.py config.py config.yaml ~/
-cp -r data ui ~/
+cp -r . /home/pizero/pontoon-wind-meter/
 ```
+
+### Deploy with the install script (recommended)
+
+The `scripts/install_service.sh` script handles everything in one step:
+
+```bash
+sudo bash scripts/install_service.sh
+```
+
+It will:
+1. Stop the existing service (if running)
+2. Copy all project files to `/home/pizero/pontoon-wind-meter`
+3. Install/update Python packages into `/home/pizero/tftenv`
+4. Install the systemd unit and reload the daemon
+5. Enable and restart the service
+6. Print the final service status
 
 ---
 
 ## Running Manually
 
 ```bash
-/home/pizero/tftenv/bin/python /home/pizero/pontoon_meter.py
+/home/pizero/tftenv/bin/python /home/pizero/pontoon-wind-meter/pontoon_meter.py
 ```
 
 ---
@@ -176,11 +209,32 @@ journalctl -u pontoon-meter.service -f
 
 ## Running Tests
 
-Tests cover NDBC parsing, unit conversion, configuration loading, and Go/No-Go scoring.  They run on any machine — no Pi or display hardware required.
+Tests cover NDBC parsing, unit conversion, configuration loading, Go/No-Go scoring, and the disk cache.  They run on any machine — no Pi or display hardware required.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest test_ndbc.py test_config.py test_logic.py -v
+pytest -q
+```
+
+---
+
+## Troubleshooting
+
+```bash
+# Check service status
+systemctl status pontoon-meter.service
+
+# Follow live logs
+journalctl -u pontoon-meter.service -f
+
+# View the last cached snapshot
+cat /home/pizero/.cache/pontoon-meter/latest_snapshot.json
+
+# Remove the cache if it is corrupt or you want a clean start
+rm /home/pizero/.cache/pontoon-meter/latest_snapshot.json
+
+# Restart the service after editing config.yaml
+sudo systemctl restart pontoon-meter.service
 ```
 
 ---

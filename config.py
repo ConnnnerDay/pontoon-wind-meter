@@ -60,6 +60,10 @@ _DEFAULTS: dict[str, Any] = {
     "alerts_interval":    600,
     "frame_rate":         30,
     "web_port":           8080,
+    # disk cache
+    "cache_enabled":          True,
+    "cache_path":             "/home/pizero/.cache/pontoon-meter/latest_snapshot.json",
+    "cache_max_age_minutes":  180,
 }
 
 # env-var suffix → (config key, cast function)
@@ -82,10 +86,13 @@ _ENV_MAP: dict[str, tuple[str, type]] = {
     "ALERTS_INTERVAL":    ("alerts_interval",     int),
     "FRAME_RATE":         ("frame_rate",          int),
     "WEB_PORT":           ("web_port",            int),
-    "NDBC_STATION":       ("ndbc_station",        str),
-    "COOPS_STATION":      ("coops_station",       str),
-    "LAT":                ("lat",                 float),
-    "LON":                ("lon",                 float),
+    "NDBC_STATION":            ("ndbc_station",          str),
+    "COOPS_STATION":           ("coops_station",         str),
+    "LAT":                     ("lat",                   float),
+    "LON":                     ("lon",                   float),
+    "CACHE_ENABLED":           ("cache_enabled",         lambda v: v.lower() not in ("0", "false", "no")),
+    "CACHE_PATH":              ("cache_path",            str),
+    "CACHE_MAX_AGE_MINUTES":   ("cache_max_age_minutes", int),
 }
 _ENV_PREFIX = "PONTOON_"
 
@@ -126,6 +133,14 @@ def _flatten_yaml(data: dict) -> dict[str, Any]:
     for key in ("poll_interval", "alerts_interval", "frame_rate", "web_port"):
         if key in pol:
             flat[key] = int(pol[key])
+
+    cac = data.get("cache", {})
+    if "enabled" in cac:
+        flat["cache_enabled"] = bool(cac["enabled"])
+    if "path" in cac:
+        flat["cache_path"] = str(cac["path"])
+    if "max_age_minutes" in cac:
+        flat["cache_max_age_minutes"] = int(cac["max_age_minutes"])
 
     return flat
 
@@ -177,11 +192,9 @@ def load_config(
                     cfg[key] = cast(val)
                 except (ValueError, TypeError):
                     pass
+        if getattr(args, "no_cache", False):
+            cfg["cache_enabled"] = False
 
-    logging.info(
-        "Config: location=%s ndbc=%s good_mph=%.0f caution_mph=%.0f",
-        cfg["location_name"], cfg["ndbc_station"], cfg["good_mph"], cfg["caution_mph"],
-    )
     return cfg
 
 
@@ -204,6 +217,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--frame-rate",        type=int,   metavar="FPS",  dest="frame_rate",         help="Display frame rate")
     p.add_argument("--ndbc-station",      type=str,   metavar="ID",   dest="ndbc_station",      help="NDBC station ID")
     p.add_argument("--coops-station",     type=str,   metavar="ID",   dest="coops_station",     help="CO-OPS station ID")
-    p.add_argument("--lat",               type=float, metavar="DEG",                            help="Location latitude")
-    p.add_argument("--lon",               type=float, metavar="DEG",                            help="Location longitude")
+    p.add_argument("--lat",                  type=float, metavar="DEG",                              help="Location latitude")
+    p.add_argument("--lon",                  type=float, metavar="DEG",                              help="Location longitude")
+    p.add_argument("--cache-path",           type=str,   metavar="FILE", dest="cache_path",           help="Snapshot cache file path")
+    p.add_argument("--no-cache",             action="store_true",        dest="no_cache",             help="Disable the disk cache")
+    p.add_argument("--cache-max-age",        type=int,   metavar="MIN",  dest="cache_max_age_minutes", help="Cache max age in minutes")
     return p

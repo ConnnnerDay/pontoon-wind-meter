@@ -839,6 +839,13 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
            fill=(60, 60, 60) if stale else (255, 255, 255),
            font=font_unit, anchor="mm")
 
+    # CACHED badge — amber pill on the left of the status band when showing offline data
+    if state.get("cached"):
+        badge_text = "CACHED"
+        bx = 6 * _SS
+        d.text((bx + _SS, band_cy + _SS), badge_text, fill=(0, 0, 0),       font=font_label, anchor="lm")
+        d.text((bx,       band_cy),       badge_text, fill=(200, 140, 0),   font=font_label, anchor="lm")
+
     _DOT_C = {"GO": _GREEN, "CAUTION": _YELLOW, "NO-GO": _RED}
     fog_risk     = dewp is not None and atmp is not None and (atmp - dewp) < fog_spread_f
     pres_falling = False
