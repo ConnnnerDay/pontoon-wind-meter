@@ -15,11 +15,13 @@ import threading
 import time
 
 from ndbc import ms_to_mph, celsius_to_f, m_to_ft, wind_direction, parse_ndbc, obs_age_minutes
+from locations import ACTIVE_LOCATION, fetch_coops_water_temp
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-URL             = "https://www.ndbc.noaa.gov/data/realtime2/41038.txt"
-ALERTS_URL      = "https://api.weather.gov/alerts/active?point=34.2108,-77.5986"
+_LOC            = ACTIVE_LOCATION
+URL             = f"https://www.ndbc.noaa.gov/data/realtime2/{_LOC['ndbc_station']}.txt"
+ALERTS_URL      = f"https://api.weather.gov/alerts/active?point={_LOC['lat']},{_LOC['lon']}"
 POLL_INTERVAL   = 300   # seconds between NDBC refreshes
 ALERTS_INTERVAL = 600   # seconds between alert refreshes
 FRAME_RATE      = 30    # display frames per second
@@ -1194,6 +1196,8 @@ def _data_loop():
             dpd_raw  = row.get("DPD",  "MM")
             dewp_raw = row.get("DEWP", "MM")
             wtmp = celsius_to_f(float(wtmp_raw)) if wtmp_raw != "MM" else None
+            if wtmp is None:
+                wtmp = fetch_coops_water_temp(_LOC["coops_station"])
             wvht = m_to_ft(float(wvht_raw))      if wvht_raw != "MM" else None
             atmp = celsius_to_f(float(atmp_raw)) if atmp_raw != "MM" else None
             dewp = celsius_to_f(float(dewp_raw)) if dewp_raw != "MM" else None

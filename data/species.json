@@ -1,0 +1,137 @@
+{
+  "_comment": "Common sport fish for Wilmington / Wrightsville Beach, NC. Conditions notes reference the go/no-go thresholds used by pontoon_meter.py.",
+  "species": [
+    {
+      "name": "Red Drum",
+      "common_aliases": ["Redfish", "Channel Bass"],
+      "habitat": ["surf", "pier", "inshore"],
+      "size_range_lbs": [1, 40],
+      "typical_length_in": [14, 60],
+      "typical_rigs": ["Carolina rig", "popping cork", "jig"],
+      "best_baits": ["mullet", "crab", "shrimp"],
+      "season": ["spring", "fall"],
+      "conditions_note": "Active in 55–80°F water; feeds well in moderate chop (GO/CAUTION)"
+    },
+    {
+      "name": "Flounder",
+      "common_aliases": ["Southern Flounder"],
+      "habitat": ["inshore", "pier", "surf"],
+      "size_range_lbs": [0.5, 10],
+      "typical_length_in": [10, 26],
+      "typical_rigs": ["bucktail jig", "live-bait bottom rig", "Gulp! on jig head"],
+      "best_baits": ["live finger mullet", "mud minnow", "shrimp"],
+      "season": ["spring", "summer", "fall"],
+      "conditions_note": "Hugs bottom; fishable in flat to moderate seas (GO conditions preferred)"
+    },
+    {
+      "name": "Spotted Seatrout",
+      "common_aliases": ["Speckled Trout", "Specs"],
+      "habitat": ["inshore", "pier"],
+      "size_range_lbs": [0.5, 8],
+      "typical_length_in": [12, 28],
+      "typical_rigs": ["popping cork + shrimp", "soft-plastic swimbait", "topwater plug"],
+      "best_baits": ["shrimp", "Gulp! shrimp", "live mullet"],
+      "season": ["spring", "summer", "fall"],
+      "conditions_note": "Prefers calm ICW grass flats; best on GO days with light winds"
+    },
+    {
+      "name": "Spanish Mackerel",
+      "common_aliases": ["Macks"],
+      "habitat": ["pier", "nearshore", "surf"],
+      "size_range_lbs": [0.5, 6],
+      "typical_length_in": [12, 28],
+      "typical_rigs": ["Clark spoon on wire leader", "inline spinner", "small jig"],
+      "best_baits": ["glass minnows", "Gotcha plug", "spoon"],
+      "season": ["spring", "summer", "fall"],
+      "conditions_note": "Follows bait schools; fishable in CAUTION conditions from pier or surf"
+    },
+    {
+      "name": "Bluefish",
+      "common_aliases": ["Blues", "Choppers"],
+      "habitat": ["surf", "pier", "nearshore"],
+      "size_range_lbs": [0.5, 15],
+      "typical_length_in": [10, 32],
+      "typical_rigs": ["metal spoon", "bucktail jig", "swimming plug"],
+      "best_baits": ["cut mullet", "metal lure", "spoon"],
+      "season": ["spring", "fall"],
+      "conditions_note": "Aggressive in rough surf; CAUTION days can produce good bluefish action"
+    },
+    {
+      "name": "Pompano",
+      "common_aliases": ["Florida Pompano"],
+      "habitat": ["surf", "pier"],
+      "size_range_lbs": [0.5, 4],
+      "typical_length_in": [9, 18],
+      "typical_rigs": ["pompano rig (double-drop with floats)", "jig"],
+      "best_baits": ["sand fleas (mole crabs)", "shrimp", "Fishbites"],
+      "season": ["spring", "fall"],
+      "conditions_note": "Feeds in the wash; light-to-moderate surf (GO to low CAUTION) is ideal"
+    },
+    {
+      "name": "Cobia",
+      "common_aliases": ["Ling", "Lemonfish"],
+      "habitat": ["nearshore", "offshore"],
+      "size_range_lbs": [5, 80],
+      "typical_length_in": [24, 60],
+      "typical_rigs": ["jig under buoy/ray", "live eel rig", "circle-hook chunk bait"],
+      "best_baits": ["live eel", "crab", "large jig"],
+      "season": ["spring", "summer"],
+      "conditions_note": "Open-water species; only attempt on full GO days with calm seas"
+    },
+    {
+      "name": "King Mackerel",
+      "common_aliases": ["Kingfish", "Kings"],
+      "habitat": ["nearshore", "offshore"],
+      "size_range_lbs": [5, 60],
+      "typical_length_in": [24, 60],
+      "typical_rigs": ["slow-troll live bait on wire stinger rig", "large spoon troll"],
+      "best_baits": ["live menhaden", "live bluefish", "large spoon"],
+      "season": ["spring", "summer", "fall"],
+      "conditions_note": "Trolling species; requires GO conditions and calm 1–3 ft seas"
+    },
+    {
+      "name": "Black Drum",
+      "common_aliases": ["Drum"],
+      "habitat": ["inshore", "pier"],
+      "size_range_lbs": [1, 60],
+      "typical_length_in": [14, 50],
+      "typical_rigs": ["bottom rig", "fish-finder rig"],
+      "best_baits": ["crab", "shrimp", "clam"],
+      "season": ["spring", "fall", "winter"],
+      "conditions_note": "Slow-moving bottom feeder; fishable in almost any GO or CAUTION conditions"
+    },
+    {
+      "name": "Sheepshead",
+      "common_aliases": ["Convict Fish"],
+      "habitat": ["inshore", "pier"],
+      "size_range_lbs": [1, 10],
+      "typical_length_in": [10, 24],
+      "typical_rigs": ["knocker rig", "jig head with crab chunk"],
+      "best_baits": ["fiddler crab", "barnacles", "sand fleas"],
+      "season": ["winter", "spring"],
+      "conditions_note": "Structure-oriented; piers and bridge pilings; all GO/CAUTION conditions work"
+    },
+    {
+      "name": "Mahi-Mahi",
+      "common_aliases": ["Dolphin", "Dorado"],
+      "habitat": ["offshore"],
+      "size_range_lbs": [2, 40],
+      "typical_length_in": [18, 48],
+      "typical_rigs": ["trolling skirt", "ballyhoo on circle hook", "pitch bait on jig"],
+      "best_baits": ["ballyhoo", "flying fish", "squid"],
+      "season": ["summer"],
+      "conditions_note": "Gulf Stream species (60+ miles offshore); only safe on full GO days with <2 ft seas"
+    },
+    {
+      "name": "Striped Bass",
+      "common_aliases": ["Rockfish", "Stripers"],
+      "habitat": ["surf", "inshore"],
+      "size_range_lbs": [1, 50],
+      "typical_length_in": [16, 48],
+      "typical_rigs": ["bucktail jig", "swimming plug", "chunk bait bottom rig"],
+      "best_baits": ["bunker chunk", "live eel", "large bucktail"],
+      "season": ["winter", "spring"],
+      "conditions_note": "Seasonal migrant; active in cooler water (50–65°F); CAUTION surf days can be prime"
+    }
+  ]
+}
