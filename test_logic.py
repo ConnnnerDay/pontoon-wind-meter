@@ -270,6 +270,35 @@ def test_stable_pressure_no_penalty():
     assert score < _CFG["good_mph"]
 
 
+def test_dangerous_heat_index_forces_caution():
+    """A high heat index (NWS 'Danger') must read at least CAUTION on calm wind."""
+    s = _state(gust=6.0, wind=4.0, atmp=95.0, dewp=78.0)  # heat index ~110°F
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) in ("CAUTION", "NO-GO")
+    assert score >= _CFG["good_mph"]
+
+
+def test_extreme_heat_index_forces_nogo():
+    """An 'Extreme Danger' heat index (~125°F+) should read NO-GO."""
+    s = _state(gust=6.0, wind=4.0, atmp=104.0, dewp=84.0)
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "NO-GO"
+
+
+def test_dry_heat_still_gets_relief_not_penalty():
+    """Hot but dry air (low humidity → modest heat index) stays GO on light wind."""
+    s = _state(gust=8.0, wind=6.0, atmp=95.0, dewp=50.0)  # ~20% RH
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "GO"
+
+
+def test_wind_chill_strengthens_cold_penalty():
+    """A cold, windy day scores no lower than the same temperature with calm air."""
+    windy = _state(gust=8.0, wind=12.0, atmp=40.0)
+    calm  = _state(gust=8.0, wind=0.0,  atmp=40.0)
+    assert composite_score(windy, _CFG) >= composite_score(calm, _CFG)
+
+
 def test_warm_air_reduces_wind_eq():
     """Hot day should give slight relief compared to cold day at same gust."""
     hot  = _state(gust=16.0, atmp=95.0)

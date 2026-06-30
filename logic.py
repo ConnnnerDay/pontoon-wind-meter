@@ -171,9 +171,11 @@ def composite_score(state: dict, cfg: dict) -> float:
 
     Wind gust is primary (full weight).  Wave height, water temperature,
     barometric pressure trend, and fog each contribute with lighter weights.
-    Any active NOAA alert forces the result to at least the CAUTION boundary.
+    A dangerous heat index or wind chill on the exposed deck, and any active
+    NOAA alert, force the result to at least the CAUTION boundary.
     """
     gust         = state.get("gust") or 0.0
+    wind         = state.get("wind")
     wvht         = state.get("wvht")
     wtmp         = state.get("wtmp")
     atmp         = state.get("atmp")
@@ -228,17 +230,37 @@ def composite_score(state: dict, cfg: dict) -> float:
         elif dpd >= wave_swell_dpd:
             wave_eq *= 0.85
 
-    # Temperature penalty (water + air)
+    # On an exposed deck a cold breeze bites harder than the bare air temp, so
+    # use the wind-chill "feels like" value when it is colder. (The NOAA chill
+    # formula is only meaningful for atmp ≤ 50 °F and wind ≥ 3 mph.)
+    feels_cold = atmp
+    if atmp is not None and wind is not None and atmp <= 50 and wind >= 3:
+        feels_cold = min(atmp, wind_chill_f(atmp, wind))
+
+    # Temperature penalty (water + air, the latter via the feels-like value)
     temp_eq = 0.0
     if wtmp is not None and wtmp < temp_cool_f:
         span = max(1, temp_cool_f - temp_cold_f)
         temp_eq = max(temp_eq, min(caution_mph, (temp_cool_f - wtmp) / span * caution_mph))
-    if atmp is not None:
-        if atmp < temp_cold_f:
-            temp_eq = max(temp_eq, min(good_mph, (temp_cold_f - atmp) / 15.0 * good_mph))
-        elif atmp < atmp_chilly_f:
-            chilly_frac = (atmp_chilly_f - atmp) / (atmp_chilly_f - temp_cold_f)
+    if feels_cold is not None:
+        if feels_cold < temp_cold_f:
+            temp_eq = max(temp_eq, min(good_mph, (temp_cold_f - feels_cold) / 15.0 * good_mph))
+        elif feels_cold < atmp_chilly_f:
+            chilly_frac = (atmp_chilly_f - feels_cold) / (atmp_chilly_f - temp_cold_f)
             temp_eq = max(temp_eq, chilly_frac * good_mph * 0.75)
+
+    # Heat-index danger: an open deck offers no shade, so a high heat index is a
+    # real hazard — and it must counterbalance the warm-wind relief above, which
+    # otherwise nudges a brutally hot day toward GO. NWS "Danger" begins near a
+    # 103 °F heat index; "Extreme Danger" near 125 °F.
+    heat_eq = 0.0
+    if atmp is not None and dewp is not None and atmp >= 80:
+        rh = relative_humidity(atmp, dewp)
+        if rh >= 40:
+            hi = heat_index_f(atmp, rh)
+            if hi >= 103:
+                frac = min(1.0, max(0.0, (hi - 103) / (125 - 103)))
+                heat_eq = (good_mph + 0.5) + frac * (caution_mph - good_mph)
 
     # Fog: tight air-dewpoint spread signals near-saturated air over the water
     fog_eq = 0.0
@@ -259,6 +281,7 @@ def composite_score(state: dict, cfg: dict) -> float:
         wind_eq,
         wave_eq * 0.75,   # waves: ~3 ft → CAUTION; >4.5 ft → NO-GO
         temp_eq * 0.80,   # temp: marginal reading alone won't force NO-GO
+        heat_eq,          # heat index: ≥103°F → CAUTION; ≥125°F → NO-GO
         pres_eq,
         fog_eq,
     )
