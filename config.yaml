@@ -15,9 +15,9 @@ location:
 
 thresholds:
   # Wind speed (mph) — controls gauge zone colours and GO / CAUTION / NO-GO verdict
-  good_mph:    15      # below this  → GO   (green)
-  caution_mph: 23      # 15–23 mph   → CAUTION (yellow); above → NO-GO (red)
-  gauge_max:   30      # full-scale gauge value
+  good_mph:    22      # below this  → GO   (green)
+  caution_mph: 30      # 22–30 mph   → CAUTION (yellow); above → NO-GO (red)
+  gauge_max:   40      # full-scale gauge value (must exceed caution_mph for a red zone)
 
   # Data freshness — readings older than this are shown as "STALE"
   stale_minutes: 90

@@ -41,9 +41,9 @@ _DEFAULTS: dict[str, Any] = {
     "lat":                34.2108,
     "lon":               -77.5986,
     # thresholds
-    "good_mph":           15.0,
-    "caution_mph":        23.0,
-    "gauge_max":          30.0,
+    "good_mph":           22.0,
+    "caution_mph":        30.0,
+    "gauge_max":          40.0,
     "stale_minutes":      90.0,
     "wave_good_ft":       2.0,
     "wave_caution_ft":    3.0,
