@@ -155,6 +155,28 @@ def test_cli_overrides_env_var(tmp_path, monkeypatch):
 # Priority ordering smoke test
 # ---------------------------------------------------------------------------
 
+def test_gauge_max_raised_when_not_above_caution(tmp_path):
+    """A gauge_max <= caution_mph (no red zone) is auto-corrected upward."""
+    p = make_yaml(tmp_path, """
+        thresholds:
+          good_mph: 15
+          caution_mph: 30
+          gauge_max: 30
+    """)
+    cfg = load_config(config_path=p)
+    assert cfg["gauge_max"] > cfg["caution_mph"]
+
+
+def test_valid_gauge_max_left_untouched(tmp_path):
+    p = make_yaml(tmp_path, """
+        thresholds:
+          caution_mph: 23
+          gauge_max: 30
+    """)
+    cfg = load_config(config_path=p)
+    assert cfg["gauge_max"] == 30.0
+
+
 def test_priority_order(tmp_path, monkeypatch):
     """CLI > env > yaml > default."""
     p = make_yaml(tmp_path, "thresholds:\n  caution_mph: 25\n")
