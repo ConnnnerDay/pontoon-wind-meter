@@ -23,7 +23,7 @@ _CFG = {
     "temp_cold_f":        50.0,
     "atmp_warm_f":        80.0,
     "atmp_chilly_f":      62.0,
-    "fog_spread_f":       5.0,
+    "fog_spread_f":       3.0,
     "pres_fall_caution":  1.5,
 }
 
@@ -205,22 +205,51 @@ def test_moderate_wind_is_caution():
     assert status_label(score, _CFG) == "CAUTION"
 
 
-def test_alert_forces_caution_floor():
-    """Even calm winds should return at least CAUTION when an alert is active."""
+def test_moderate_marine_alert_forces_caution_floor():
+    """Calm winds should still read at least CAUTION under a relevant Moderate alert."""
     s = _state(gust=5.0, wind=4.0, alerts=[("SMALL CRAFT ADVISORY", "Moderate")])
     score = composite_score(s, _CFG)
     assert score >= _CFG["good_mph"]
     assert status_label(score, _CFG) in ("CAUTION", "NO-GO")
 
 
+def test_severe_alert_forces_nogo_floor():
+    """Severe/Extreme alerts should floor at NO-GO, not just CAUTION."""
+    s = _state(gust=5.0, wind=4.0, alerts=[("GALE WARNING", "Severe")])
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "NO-GO"
+
+
+def test_rip_current_statement_does_not_force_caution():
+    """Perpetual coastal swimmer advisories must not peg the gauge yellow on calm days."""
+    s = _state(gust=5.0, wind=4.0, wtmp=72.0,
+               alerts=[("RIP CURRENT STATEMENT", "Moderate")])
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "GO"
+
+
+def test_minor_alert_does_not_force_caution():
+    """Minor/Unknown-severity advisories are informational only."""
+    s = _state(gust=5.0, wind=4.0, wtmp=72.0,
+               alerts=[("COASTAL FLOOD ADVISORY", "Minor")])
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "GO"
+
+
 def test_fog_forces_caution():
-    s = _state(gust=5.0, atmp=62.0, dewp=59.0)  # spread = 3 < 5 → fog
+    s = _state(gust=5.0, atmp=62.0, dewp=61.0)  # spread = 1 < 3 → fog
     score = composite_score(s, _CFG)
     assert score >= _CFG["good_mph"]
 
 
+def test_no_fog_on_merely_humid_day():
+    s = _state(gust=5.0, atmp=62.0, dewp=58.0)  # spread = 4 > 3 → humid, not fog
+    score = composite_score(s, _CFG)
+    assert score < _CFG["good_mph"]
+
+
 def test_no_fog_when_spread_sufficient():
-    s = _state(gust=5.0, atmp=75.0, dewp=60.0)  # spread = 15 > 5 → no fog penalty
+    s = _state(gust=5.0, atmp=75.0, dewp=60.0)  # spread = 15 > 3 → no fog penalty
     score = composite_score(s, _CFG)
     assert score < _CFG["good_mph"]
 

@@ -53,7 +53,7 @@ _DEFAULTS: dict[str, Any] = {
     "temp_cold_f":        50.0,
     "atmp_warm_f":        80.0,
     "atmp_chilly_f":      62.0,
-    "fog_spread_f":       5.0,
+    "fog_spread_f":       3.0,
     "pres_fall_caution":  1.5,
     # polling / display
     "poll_interval":      300,

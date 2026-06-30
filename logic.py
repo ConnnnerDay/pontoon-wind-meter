@@ -119,6 +119,50 @@ def condition_statuses(state: dict, cfg: dict) -> tuple[str, str, str]:
 
 
 # ---------------------------------------------------------------------------
+# NOAA alert handling
+# ---------------------------------------------------------------------------
+
+# Land/swimmer/heat advisories that are common on the coast but say nothing
+# about whether the wind is safe for a pontoon on the water.  They are still
+# shown on the dashboard — they just don't drive the go/no-go verdict.
+_NON_BOATING_EVENTS = frozenset({
+    "RIP CURRENT STATEMENT",
+    "BEACH HAZARDS STATEMENT",
+    "AIR QUALITY ALERT",
+    "HEAT ADVISORY",
+    "EXCESSIVE HEAT WARNING",
+    "EXCESSIVE HEAT WATCH",
+})
+
+# NOAA CAP severity levels, ranked.  "Minor"/"Unknown" advisories are
+# informational and do not move the verdict on their own.
+_SEVERITY_RANK = {"extreme": 4, "severe": 3, "moderate": 2, "minor": 1, "unknown": 0}
+
+
+def alert_floor(alerts: list, cfg: dict) -> float:
+    """Composite-score floor (mph-equivalent) contributed by active alerts.
+
+    Rather than forcing CAUTION for *any* alert — which keeps the gauge pegged
+    yellow on calm days thanks to perpetual coastal rip-current/beach
+    statements — only boating-relevant alerts at Moderate severity or above
+    count.  Moderate alerts floor at CAUTION; Severe/Extreme floor at NO-GO.
+    Each ``alerts`` entry is an ``(event, severity)`` pair.
+    """
+    good_mph    = cfg["good_mph"]
+    caution_mph = cfg["caution_mph"]
+    floor = 0.0
+    for event, severity in alerts:
+        if (event or "").upper() in _NON_BOATING_EVENTS:
+            continue
+        rank = _SEVERITY_RANK.get((severity or "unknown").strip().lower(), 0)
+        if rank >= 3:        # Severe / Extreme
+            floor = max(floor, caution_mph + 0.5)
+        elif rank == 2:      # Moderate
+            floor = max(floor, good_mph + 0.5)
+    return floor
+
+
+# ---------------------------------------------------------------------------
 # Composite go/no-go score
 # ---------------------------------------------------------------------------
 
@@ -213,8 +257,7 @@ def composite_score(state: dict, cfg: dict) -> float:
         fog_eq,
     )
 
-    if alerts:
-        result = max(result, good_mph + 0.5)
+    result = max(result, alert_floor(alerts, cfg))
 
     return min(result, gauge_max)
 

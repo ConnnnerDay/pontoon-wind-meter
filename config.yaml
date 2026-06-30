@@ -36,8 +36,11 @@ thresholds:
   atmp_warm_f:   80.0  # above this, warm-day wind relief applies (up to 5 mph equiv.)
   atmp_chilly_f: 62.0  # below this, cold-air comfort penalty applies
 
-  # Fog risk — air-to-dewpoint spread below this suggests fog / mist on the water
-  fog_spread_f: 5.0
+  # Fog risk — air-to-dewpoint spread below this suggests fog / mist on the water.
+  # Kept tight: a ~5°F spread is just a humid coastal day, not fog. Near-
+  # saturation (≤3°F) is a more honest mist/fog signal and avoids a perpetual
+  # CAUTION on muggy-but-calm days.
+  fog_spread_f: 3.0
 
   # Falling pressure — hPa drop over the polling window that triggers a CAUTION floor
   pres_fall_caution: 1.5
