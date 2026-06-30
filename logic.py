@@ -119,6 +119,50 @@ def condition_statuses(state: dict, cfg: dict) -> tuple[str, str, str]:
 
 
 # ---------------------------------------------------------------------------
+# NOAA alert handling
+# ---------------------------------------------------------------------------
+
+# Land/swimmer/heat advisories that are common on the coast but say nothing
+# about whether the wind is safe for a pontoon on the water.  They are still
+# shown on the dashboard — they just don't drive the go/no-go verdict.
+_NON_BOATING_EVENTS = frozenset({
+    "RIP CURRENT STATEMENT",
+    "BEACH HAZARDS STATEMENT",
+    "AIR QUALITY ALERT",
+    "HEAT ADVISORY",
+    "EXCESSIVE HEAT WARNING",
+    "EXCESSIVE HEAT WATCH",
+})
+
+# NOAA CAP severity levels, ranked.  "Minor"/"Unknown" advisories are
+# informational and do not move the verdict on their own.
+_SEVERITY_RANK = {"extreme": 4, "severe": 3, "moderate": 2, "minor": 1, "unknown": 0}
+
+
+def alert_floor(alerts: list, cfg: dict) -> float:
+    """Composite-score floor (mph-equivalent) contributed by active alerts.
+
+    Only genuinely dangerous, boating-relevant alerts move the verdict: a
+    Severe or Extreme warning (gale, storm, special marine, tropical storm,
+    hurricane …) floors the result at NO-GO.  Routine advisories — Moderate or
+    below, e.g. a Small Craft Advisory or the perpetual coastal rip-current /
+    beach statements — are shown on the dashboard but do NOT force CAUTION,
+    since the actual wind, wave, and weather readings already drive the verdict
+    when conditions warrant it.  Each ``alerts`` entry is an
+    ``(event, severity)`` pair.
+    """
+    caution_mph = cfg["caution_mph"]
+    floor = 0.0
+    for event, severity in alerts:
+        if (event or "").upper() in _NON_BOATING_EVENTS:
+            continue
+        rank = _SEVERITY_RANK.get((severity or "unknown").strip().lower(), 0)
+        if rank >= 3:        # Severe / Extreme only
+            floor = max(floor, caution_mph + 0.5)
+    return floor
+
+
+# ---------------------------------------------------------------------------
 # Composite go/no-go score
 # ---------------------------------------------------------------------------
 
@@ -127,9 +171,11 @@ def composite_score(state: dict, cfg: dict) -> float:
 
     Wind gust is primary (full weight).  Wave height, water temperature,
     barometric pressure trend, and fog each contribute with lighter weights.
-    Any active NOAA alert forces the result to at least the CAUTION boundary.
+    A dangerous heat index or wind chill on the exposed deck, and any active
+    NOAA alert, force the result to at least the CAUTION boundary.
     """
     gust         = state.get("gust") or 0.0
+    wind         = state.get("wind")
     wvht         = state.get("wvht")
     wtmp         = state.get("wtmp")
     atmp         = state.get("atmp")
@@ -169,7 +215,13 @@ def composite_score(state: dict, cfg: dict) -> float:
         t = (wvht - wave_good_ft) / (wave_caution_ft - wave_good_ft)
         wave_eq = good_mph + t * (caution_mph - good_mph)
     else:
-        wave_eq = min(gauge_max, caution_mph + (wvht - wave_caution_ft) * 3.5)
+        # Above the caution height, climb fast enough that the *weighted*
+        # contribution (wave_eq * 0.75 below) crosses the NO-GO line just past
+        # ~4.5 ft.  Do NOT clamp to gauge_max here — that pre-weight cap used to
+        # hold the weighted result at 22.5 (CAUTION) no matter how big the sea,
+        # so a 10 ft swell on calm wind never read NO-GO.  The final
+        # ``min(result, gauge_max)`` is the real ceiling.
+        wave_eq = caution_mph + (wvht - wave_caution_ft) * 5.0
 
     # DPD modulates wave danger: choppy short-period seas are worse on a pontoon
     if dpd is not None and wvht and wvht > 0:
@@ -178,17 +230,37 @@ def composite_score(state: dict, cfg: dict) -> float:
         elif dpd >= wave_swell_dpd:
             wave_eq *= 0.85
 
-    # Temperature penalty (water + air)
+    # On an exposed deck a cold breeze bites harder than the bare air temp, so
+    # use the wind-chill "feels like" value when it is colder. (The NOAA chill
+    # formula is only meaningful for atmp ≤ 50 °F and wind ≥ 3 mph.)
+    feels_cold = atmp
+    if atmp is not None and wind is not None and atmp <= 50 and wind >= 3:
+        feels_cold = min(atmp, wind_chill_f(atmp, wind))
+
+    # Temperature penalty (water + air, the latter via the feels-like value)
     temp_eq = 0.0
     if wtmp is not None and wtmp < temp_cool_f:
         span = max(1, temp_cool_f - temp_cold_f)
         temp_eq = max(temp_eq, min(caution_mph, (temp_cool_f - wtmp) / span * caution_mph))
-    if atmp is not None:
-        if atmp < temp_cold_f:
-            temp_eq = max(temp_eq, min(good_mph, (temp_cold_f - atmp) / 15.0 * good_mph))
-        elif atmp < atmp_chilly_f:
-            chilly_frac = (atmp_chilly_f - atmp) / (atmp_chilly_f - temp_cold_f)
+    if feels_cold is not None:
+        if feels_cold < temp_cold_f:
+            temp_eq = max(temp_eq, min(good_mph, (temp_cold_f - feels_cold) / 15.0 * good_mph))
+        elif feels_cold < atmp_chilly_f:
+            chilly_frac = (atmp_chilly_f - feels_cold) / (atmp_chilly_f - temp_cold_f)
             temp_eq = max(temp_eq, chilly_frac * good_mph * 0.75)
+
+    # Heat-index danger: an open deck offers no shade, so a high heat index is a
+    # real hazard — and it must counterbalance the warm-wind relief above, which
+    # otherwise nudges a brutally hot day toward GO. NWS "Danger" begins near a
+    # 103 °F heat index; "Extreme Danger" near 125 °F.
+    heat_eq = 0.0
+    if atmp is not None and dewp is not None and atmp >= 80:
+        rh = relative_humidity(atmp, dewp)
+        if rh >= 40:
+            hi = heat_index_f(atmp, rh)
+            if hi >= 103:
+                frac = min(1.0, max(0.0, (hi - 103) / (125 - 103)))
+                heat_eq = (good_mph + 0.5) + frac * (caution_mph - good_mph)
 
     # Fog: tight air-dewpoint spread signals near-saturated air over the water
     fog_eq = 0.0
@@ -207,14 +279,14 @@ def composite_score(state: dict, cfg: dict) -> float:
 
     result = max(
         wind_eq,
-        wave_eq * 0.75,   # waves: 4 ft → CAUTION; >4.5 ft → NO-GO
+        wave_eq * 0.75,   # waves: ~3 ft → CAUTION; >4.5 ft → NO-GO
         temp_eq * 0.80,   # temp: marginal reading alone won't force NO-GO
+        heat_eq,          # heat index: ≥103°F → CAUTION; ≥125°F → NO-GO
         pres_eq,
         fog_eq,
     )
 
-    if alerts:
-        result = max(result, good_mph + 0.5)
+    result = max(result, alert_floor(alerts, cfg))
 
     return min(result, gauge_max)
 

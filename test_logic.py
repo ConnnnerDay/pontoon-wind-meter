@@ -23,7 +23,7 @@ _CFG = {
     "temp_cold_f":        50.0,
     "atmp_warm_f":        80.0,
     "atmp_chilly_f":      62.0,
-    "fog_spread_f":       5.0,
+    "fog_spread_f":       3.0,
     "pres_fall_caution":  1.5,
 }
 
@@ -205,22 +205,67 @@ def test_moderate_wind_is_caution():
     assert status_label(score, _CFG) == "CAUTION"
 
 
-def test_alert_forces_caution_floor():
-    """Even calm winds should return at least CAUTION when an alert is active."""
-    s = _state(gust=5.0, wind=4.0, alerts=[("SMALL CRAFT ADVISORY", "Moderate")])
+def test_moderate_advisory_does_not_change_verdict():
+    """A Moderate advisory (e.g. Small Craft Advisory) is informational only —
+    light wind stays GO; the real wind/wave readings drive any caution."""
+    s = _state(gust=5.0, wind=4.0, wtmp=72.0,
+               alerts=[("SMALL CRAFT ADVISORY", "Moderate")])
     score = composite_score(s, _CFG)
-    assert score >= _CFG["good_mph"]
-    assert status_label(score, _CFG) in ("CAUTION", "NO-GO")
+    assert status_label(score, _CFG) == "GO"
+
+
+def test_severe_alert_forces_nogo_floor():
+    """Severe/Extreme alerts (the genuinely dangerous ones) floor at NO-GO."""
+    s = _state(gust=5.0, wind=4.0, alerts=[("GALE WARNING", "Severe")])
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "NO-GO"
+
+
+def test_extreme_alert_forces_nogo_floor():
+    s = _state(gust=5.0, wind=4.0, alerts=[("HURRICANE WARNING", "Extreme")])
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "NO-GO"
+
+
+def test_rip_current_statement_does_not_force_caution():
+    """Perpetual coastal swimmer advisories must not peg the gauge yellow on calm days."""
+    s = _state(gust=5.0, wind=4.0, wtmp=72.0,
+               alerts=[("RIP CURRENT STATEMENT", "Moderate")])
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "GO"
+
+
+def test_minor_alert_does_not_force_caution():
+    """Minor/Unknown-severity advisories are informational only."""
+    s = _state(gust=5.0, wind=4.0, wtmp=72.0,
+               alerts=[("COASTAL FLOOD ADVISORY", "Minor")])
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "GO"
+
+
+def test_severe_non_boating_alert_does_not_force_nogo():
+    """A Severe land/heat warning must not force a boating NO-GO on calm wind;
+    the heat-index term handles on-deck heat separately."""
+    s = _state(gust=5.0, wind=4.0, wtmp=72.0,
+               alerts=[("EXCESSIVE HEAT WARNING", "Severe")])
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "GO"
 
 
 def test_fog_forces_caution():
-    s = _state(gust=5.0, atmp=62.0, dewp=59.0)  # spread = 3 < 5 → fog
+    s = _state(gust=5.0, atmp=62.0, dewp=61.0)  # spread = 1 < 3 → fog
     score = composite_score(s, _CFG)
     assert score >= _CFG["good_mph"]
 
 
+def test_no_fog_on_merely_humid_day():
+    s = _state(gust=5.0, atmp=62.0, dewp=58.0)  # spread = 4 > 3 → humid, not fog
+    score = composite_score(s, _CFG)
+    assert score < _CFG["good_mph"]
+
+
 def test_no_fog_when_spread_sufficient():
-    s = _state(gust=5.0, atmp=75.0, dewp=60.0)  # spread = 15 > 5 → no fog penalty
+    s = _state(gust=5.0, atmp=75.0, dewp=60.0)  # spread = 15 > 3 → no fog penalty
     score = composite_score(s, _CFG)
     assert score < _CFG["good_mph"]
 
@@ -241,11 +286,55 @@ def test_stable_pressure_no_penalty():
     assert score < _CFG["good_mph"]
 
 
+def test_dangerous_heat_index_forces_caution():
+    """A high heat index (NWS 'Danger') must read at least CAUTION on calm wind."""
+    s = _state(gust=6.0, wind=4.0, atmp=95.0, dewp=78.0)  # heat index ~110°F
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) in ("CAUTION", "NO-GO")
+    assert score >= _CFG["good_mph"]
+
+
+def test_extreme_heat_index_forces_nogo():
+    """An 'Extreme Danger' heat index (~125°F+) should read NO-GO."""
+    s = _state(gust=6.0, wind=4.0, atmp=104.0, dewp=84.0)
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "NO-GO"
+
+
+def test_dry_heat_still_gets_relief_not_penalty():
+    """Hot but dry air (low humidity → modest heat index) stays GO on light wind."""
+    s = _state(gust=8.0, wind=6.0, atmp=95.0, dewp=50.0)  # ~20% RH
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "GO"
+
+
+def test_wind_chill_strengthens_cold_penalty():
+    """A cold, windy day scores no lower than the same temperature with calm air."""
+    windy = _state(gust=8.0, wind=12.0, atmp=40.0)
+    calm  = _state(gust=8.0, wind=0.0,  atmp=40.0)
+    assert composite_score(windy, _CFG) >= composite_score(calm, _CFG)
+
+
 def test_warm_air_reduces_wind_eq():
     """Hot day should give slight relief compared to cold day at same gust."""
     hot  = _state(gust=16.0, atmp=95.0)
     cold = _state(gust=16.0, atmp=60.0)
     assert composite_score(hot, _CFG) < composite_score(cold, _CFG)
+
+
+def test_big_waves_force_nogo_on_calm_wind():
+    """A large sea must read NO-GO even when the wind is dead calm."""
+    for wv in (5.0, 8.0, 20.0):
+        s = _state(gust=3.0, wind=2.0, wvht=wv, dpd=7.0)
+        score = composite_score(s, _CFG)
+        assert status_label(score, _CFG) == "NO-GO", f"{wv} ft should be NO-GO"
+
+
+def test_moderate_waves_are_caution_not_nogo():
+    """~4 ft seas on calm wind stay CAUTION, not NO-GO."""
+    s = _state(gust=3.0, wind=2.0, wvht=4.0, dpd=7.0)
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "CAUTION"
 
 
 def test_chop_increases_wave_score():

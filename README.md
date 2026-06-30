@@ -53,8 +53,8 @@ location:
   lon: -77.5986
 
 thresholds:
-  good_mph:    15   # below this → GO (green)
-  caution_mph: 23   # 15–23 mph  → CAUTION (yellow); above → NO-GO (red)
+  good_mph:    22   # below this → GO (green)
+  caution_mph: 30   # 22–30 mph  → CAUTION (yellow); above → NO-GO (red)
 ```
 
 ### Environment variable overrides
@@ -92,9 +92,9 @@ Disable the cache entirely for a single run: `python pontoon_meter.py --no-cache
 
 | Status   | Gust speed   | Arc color |
 |----------|--------------|-----------|
-| GO       | Under 15 mph | Green     |
-| CAUTION  | 15 – 23 mph  | Yellow    |
-| NO-GO    | Over 23 mph  | Red       |
+| GO       | Under 22 mph | Green     |
+| CAUTION  | 22 – 30 mph  | Yellow    |
+| NO-GO    | Over 30 mph  | Red       |
 
 Wind is the primary factor. The composite score also factors in wave height, water temperature, barometric pressure trend, fog risk, heat index, and wind chill. Adjust thresholds in `config.yaml`.
 

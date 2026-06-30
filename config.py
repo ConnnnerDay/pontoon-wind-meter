@@ -41,9 +41,9 @@ _DEFAULTS: dict[str, Any] = {
     "lat":                34.2108,
     "lon":               -77.5986,
     # thresholds
-    "good_mph":           15.0,
-    "caution_mph":        23.0,
-    "gauge_max":          30.0,
+    "good_mph":           22.0,
+    "caution_mph":        30.0,
+    "gauge_max":          40.0,
     "stale_minutes":      90.0,
     "wave_good_ft":       2.0,
     "wave_caution_ft":    3.0,
@@ -53,7 +53,7 @@ _DEFAULTS: dict[str, Any] = {
     "temp_cold_f":        50.0,
     "atmp_warm_f":        80.0,
     "atmp_chilly_f":      62.0,
-    "fog_spread_f":       5.0,
+    "fog_spread_f":       3.0,
     "pres_fall_caution":  1.5,
     # polling / display
     "poll_interval":      300,
@@ -195,7 +195,36 @@ def load_config(
         if getattr(args, "no_cache", False):
             cfg["cache_enabled"] = False
 
+    _validate_thresholds(cfg)
     return cfg
+
+
+def _validate_thresholds(cfg: dict[str, Any]) -> None:
+    """Sanity-check the wind bands in place, logging and correcting bad combos.
+
+    The gauge maps ``caution_mph / gauge_max`` onto the full arc sweep, so if
+    ``gauge_max`` does not exceed ``caution_mph`` the red NO-GO zone collapses
+    to zero width — a silently broken display.  Likewise the verdict bands only
+    make sense when ``good_mph < caution_mph``.  These are easy to trip when
+    overriding one knob via env/CLI without the others, so guard against them.
+    """
+    good    = cfg["good_mph"]
+    caution = cfg["caution_mph"]
+    gmax    = cfg["gauge_max"]
+
+    if good >= caution:
+        logging.warning(
+            "Config: good_mph (%g) should be below caution_mph (%g); "
+            "the CAUTION band will be empty or inverted.", good, caution,
+        )
+
+    if gmax <= caution:
+        fixed = round(caution * 1.25, 1)
+        logging.warning(
+            "Config: gauge_max (%g) must exceed caution_mph (%g) for a visible "
+            "red zone — raising gauge_max to %g.", gmax, caution, fixed,
+        )
+        cfg["gauge_max"] = fixed
 
 
 def build_arg_parser() -> argparse.ArgumentParser:

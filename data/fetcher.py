@@ -98,6 +98,17 @@ def _apply_cache(state: dict, lock: threading.Lock, cfg: dict) -> bool:
         for key in disk_cache.CACHE_FIELDS:
             if key in snapshot:
                 state[key] = snapshot[key]
+        # The cached "age" was frozen when the snapshot was written.  Add the
+        # wall-clock time elapsed since the save so the freshness bar / STALE
+        # flag reflect how old the data actually is now — otherwise hours-old
+        # cached data renders as if it were minutes fresh.
+        saved_at = snapshot.get(disk_cache._TIMESTAMP_KEY)
+        if state.get("age") is not None and saved_at is not None:
+            try:
+                elapsed_min = max(0.0, (time.time() - float(saved_at)) / 60.0)
+                state["age"] = int(state["age"] + elapsed_min)
+            except (TypeError, ValueError):
+                pass
         state["cached"] = True
         state["error"]  = None
 
@@ -201,11 +212,18 @@ def data_loop(state: dict, lock: threading.Lock, cfg: dict) -> None:
 
         except Exception as exc:
             logging.error("NDBC live fetch failed: %s", exc)
+            applied = False
             if cache_enabled and cache_path:
-                _apply_cache(state, lock, cfg)
-            else:
+                applied = _apply_cache(state, lock, cfg)
+            if not applied:
+                # No fresh reading and the cache couldn't help. Keep aging the
+                # last reading by roughly the elapsed poll so the display moves
+                # toward STALE instead of freezing on a confident verdict.
                 with lock:
-                    state["error"] = str(exc)
+                    if state.get("age") is not None:
+                        state["age"] += max(1, poll_interval // 60)
+                    if not cache_enabled:
+                        state["error"] = str(exc)
 
         if time.monotonic() - last_alert_fetch >= alerts_interval:
             try:
