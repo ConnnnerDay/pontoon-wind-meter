@@ -205,17 +205,24 @@ def test_moderate_wind_is_caution():
     assert status_label(score, _CFG) == "CAUTION"
 
 
-def test_moderate_marine_alert_forces_caution_floor():
-    """Calm winds should still read at least CAUTION under a relevant Moderate alert."""
-    s = _state(gust=5.0, wind=4.0, alerts=[("SMALL CRAFT ADVISORY", "Moderate")])
+def test_moderate_advisory_does_not_change_verdict():
+    """A Moderate advisory (e.g. Small Craft Advisory) is informational only —
+    light wind stays GO; the real wind/wave readings drive any caution."""
+    s = _state(gust=5.0, wind=4.0, wtmp=72.0,
+               alerts=[("SMALL CRAFT ADVISORY", "Moderate")])
     score = composite_score(s, _CFG)
-    assert score >= _CFG["good_mph"]
-    assert status_label(score, _CFG) in ("CAUTION", "NO-GO")
+    assert status_label(score, _CFG) == "GO"
 
 
 def test_severe_alert_forces_nogo_floor():
-    """Severe/Extreme alerts should floor at NO-GO, not just CAUTION."""
+    """Severe/Extreme alerts (the genuinely dangerous ones) floor at NO-GO."""
     s = _state(gust=5.0, wind=4.0, alerts=[("GALE WARNING", "Severe")])
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "NO-GO"
+
+
+def test_extreme_alert_forces_nogo_floor():
+    s = _state(gust=5.0, wind=4.0, alerts=[("HURRICANE WARNING", "Extreme")])
     score = composite_score(s, _CFG)
     assert status_label(score, _CFG) == "NO-GO"
 
@@ -232,6 +239,15 @@ def test_minor_alert_does_not_force_caution():
     """Minor/Unknown-severity advisories are informational only."""
     s = _state(gust=5.0, wind=4.0, wtmp=72.0,
                alerts=[("COASTAL FLOOD ADVISORY", "Minor")])
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "GO"
+
+
+def test_severe_non_boating_alert_does_not_force_nogo():
+    """A Severe land/heat warning must not force a boating NO-GO on calm wind;
+    the heat-index term handles on-deck heat separately."""
+    s = _state(gust=5.0, wind=4.0, wtmp=72.0,
+               alerts=[("EXCESSIVE HEAT WARNING", "Severe")])
     score = composite_score(s, _CFG)
     assert status_label(score, _CFG) == "GO"
 

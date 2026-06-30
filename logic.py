@@ -142,23 +142,23 @@ _SEVERITY_RANK = {"extreme": 4, "severe": 3, "moderate": 2, "minor": 1, "unknown
 def alert_floor(alerts: list, cfg: dict) -> float:
     """Composite-score floor (mph-equivalent) contributed by active alerts.
 
-    Rather than forcing CAUTION for *any* alert — which keeps the gauge pegged
-    yellow on calm days thanks to perpetual coastal rip-current/beach
-    statements — only boating-relevant alerts at Moderate severity or above
-    count.  Moderate alerts floor at CAUTION; Severe/Extreme floor at NO-GO.
-    Each ``alerts`` entry is an ``(event, severity)`` pair.
+    Only genuinely dangerous, boating-relevant alerts move the verdict: a
+    Severe or Extreme warning (gale, storm, special marine, tropical storm,
+    hurricane …) floors the result at NO-GO.  Routine advisories — Moderate or
+    below, e.g. a Small Craft Advisory or the perpetual coastal rip-current /
+    beach statements — are shown on the dashboard but do NOT force CAUTION,
+    since the actual wind, wave, and weather readings already drive the verdict
+    when conditions warrant it.  Each ``alerts`` entry is an
+    ``(event, severity)`` pair.
     """
-    good_mph    = cfg["good_mph"]
     caution_mph = cfg["caution_mph"]
     floor = 0.0
     for event, severity in alerts:
         if (event or "").upper() in _NON_BOATING_EVENTS:
             continue
         rank = _SEVERITY_RANK.get((severity or "unknown").strip().lower(), 0)
-        if rank >= 3:        # Severe / Extreme
+        if rank >= 3:        # Severe / Extreme only
             floor = max(floor, caution_mph + 0.5)
-        elif rank == 2:      # Moderate
-            floor = max(floor, good_mph + 0.5)
     return floor
 
 
