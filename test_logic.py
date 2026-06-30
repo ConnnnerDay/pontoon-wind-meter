@@ -277,6 +277,21 @@ def test_warm_air_reduces_wind_eq():
     assert composite_score(hot, _CFG) < composite_score(cold, _CFG)
 
 
+def test_big_waves_force_nogo_on_calm_wind():
+    """A large sea must read NO-GO even when the wind is dead calm."""
+    for wv in (5.0, 8.0, 20.0):
+        s = _state(gust=3.0, wind=2.0, wvht=wv, dpd=7.0)
+        score = composite_score(s, _CFG)
+        assert status_label(score, _CFG) == "NO-GO", f"{wv} ft should be NO-GO"
+
+
+def test_moderate_waves_are_caution_not_nogo():
+    """~4 ft seas on calm wind stay CAUTION, not NO-GO."""
+    s = _state(gust=3.0, wind=2.0, wvht=4.0, dpd=7.0)
+    score = composite_score(s, _CFG)
+    assert status_label(score, _CFG) == "CAUTION"
+
+
 def test_chop_increases_wave_score():
     choppy  = _state(gust=5.0, wvht=1.5, dpd=4.0)
     smooth  = _state(gust=5.0, wvht=1.5, dpd=10.0)

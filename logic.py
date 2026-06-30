@@ -213,7 +213,13 @@ def composite_score(state: dict, cfg: dict) -> float:
         t = (wvht - wave_good_ft) / (wave_caution_ft - wave_good_ft)
         wave_eq = good_mph + t * (caution_mph - good_mph)
     else:
-        wave_eq = min(gauge_max, caution_mph + (wvht - wave_caution_ft) * 3.5)
+        # Above the caution height, climb fast enough that the *weighted*
+        # contribution (wave_eq * 0.75 below) crosses the NO-GO line just past
+        # ~4.5 ft.  Do NOT clamp to gauge_max here — that pre-weight cap used to
+        # hold the weighted result at 22.5 (CAUTION) no matter how big the sea,
+        # so a 10 ft swell on calm wind never read NO-GO.  The final
+        # ``min(result, gauge_max)`` is the real ceiling.
+        wave_eq = caution_mph + (wvht - wave_caution_ft) * 5.0
 
     # DPD modulates wave danger: choppy short-period seas are worse on a pontoon
     if dpd is not None and wvht and wvht > 0:
@@ -251,7 +257,7 @@ def composite_score(state: dict, cfg: dict) -> float:
 
     result = max(
         wind_eq,
-        wave_eq * 0.75,   # waves: 4 ft → CAUTION; >4.5 ft → NO-GO
+        wave_eq * 0.75,   # waves: ~3 ft → CAUTION; >4.5 ft → NO-GO
         temp_eq * 0.80,   # temp: marginal reading alone won't force NO-GO
         pres_eq,
         fog_eq,
