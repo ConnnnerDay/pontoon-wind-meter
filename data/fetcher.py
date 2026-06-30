@@ -98,6 +98,17 @@ def _apply_cache(state: dict, lock: threading.Lock, cfg: dict) -> bool:
         for key in disk_cache.CACHE_FIELDS:
             if key in snapshot:
                 state[key] = snapshot[key]
+        # The cached "age" was frozen when the snapshot was written.  Add the
+        # wall-clock time elapsed since the save so the freshness bar / STALE
+        # flag reflect how old the data actually is now — otherwise hours-old
+        # cached data renders as if it were minutes fresh.
+        saved_at = snapshot.get(disk_cache._TIMESTAMP_KEY)
+        if state.get("age") is not None and saved_at is not None:
+            try:
+                elapsed_min = max(0.0, (time.time() - float(saved_at)) / 60.0)
+                state["age"] = int(state["age"] + elapsed_min)
+            except (TypeError, ValueError):
+                pass
         state["cached"] = True
         state["error"]  = None
 
