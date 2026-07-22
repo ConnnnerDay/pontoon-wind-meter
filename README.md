@@ -16,12 +16,10 @@ A 2.4" SPI TFT display shows a color-zoned speedometer gauge, current wind and g
 * Observation age indicator — turns yellow when the reading is older than 90 minutes
 
 **Display**
-* Animated speedometer gauge with green / yellow / red arc zones matching GO / CAUTION / NO-GO thresholds
+* Clean speedometer gauge with green / yellow / red arc zones matching GO / CAUTION / NO-GO thresholds
 * Smooth spring-damper needle animation
-* Wind streak animation along the inner gauge face — speed proportional to gust
 * Gust trend indicator (↑ amber / ↓ blue / — grey) based on the 15-minute delta
-* Compact compass rose showing current wind direction
-* Pulsing status badge (GO / CAUTION / NO-GO)
+* Status badge (GO / CAUTION / NO-GO)
 * Web dashboard on port 8080 (`/frame` for PNG snapshot, `/data` for JSON state)
 
 **Weather alerts**
