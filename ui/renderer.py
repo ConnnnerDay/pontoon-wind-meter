@@ -77,41 +77,17 @@ _BAND_H  = 0
 _BAND_Y0 = 0
 _BAND_Y1 = 0
 _ROW_Y   = 0
-_SEP_SEGS: list = []
-_SEP_Y1  = 0
-_SEP_Y2  = 0
-
-_BWAVE_PERIOD: int = 44
-_BWAVE_TABLE:  list = []
-_BWAVE_FREQ:   float = 0.0
 
 _MARINE_PERIOD:     int  = 110
 _MARINE_WAVE_TABLE: list = []
 _MARINE_WAVE_FREQ:  float = 0.0
 
-_GOOD_WAVE_PARAMS:   list = []
-_GOOD_WAVE_FREQS:    list = []
-_GOOD_WAVE_PERIODS:  list = []
-_GOOD_WAVE_TABLES:   list = []
-
-_GOOD_PARTICLE_X:  list = []
-_CAUTION_DROP_BX:  list = []
 _TICK_DATA:        list = []
 _TICK_OUTER: int = 0
 _TICK_INNER: int = 0
 
-_SUNBURST_C: list = []
-_SUNBURST_S: list = []
-
-_EDGE_FADE_BASE: list = []
-
 _NEEDLE_DAMPING: float = 0.89
 _NEEDLE_SPRING:  float = 0.047
-
-# Windy background streak geometry (constant)
-_WINDY_BXS = [8,  52,  96, 140, 184, 228,  30,  74]
-_WINDY_LNS = [22, 28,  20,  26,  24,  18,  32,  16]
-_WINDY_SPD = [5,   7,   4,   6,   5,   8,   6,   3]
 
 # PNG frame store for the web dashboard
 _frame_lock  = threading.Lock()
@@ -178,14 +154,9 @@ def init(device, cfg: dict) -> None:
     global _GAUGE_ARC_START, _GAUGE_ARC_SWEEP, _GOOD_ARC_END, _CAUTION_ARC_END
     global font_title, font_gust, font_data, font_label, font_strip, font_unit, font_big
     global _MPH_UNIT_W, _GUST_WIDTHS
-    global _INFO_Y, _BAND_H, _BAND_Y0, _BAND_Y1, _ROW_Y, _SEP_SEGS, _SEP_Y1, _SEP_Y2
-    global _BWAVE_PERIOD, _BWAVE_TABLE, _BWAVE_FREQ
+    global _INFO_Y, _BAND_H, _BAND_Y0, _BAND_Y1, _ROW_Y
     global _MARINE_PERIOD, _MARINE_WAVE_TABLE, _MARINE_WAVE_FREQ
-    global _GOOD_WAVE_PARAMS, _GOOD_WAVE_FREQS, _GOOD_WAVE_PERIODS, _GOOD_WAVE_TABLES
-    global _GOOD_PARTICLE_X, _CAUTION_DROP_BX
     global _TICK_DATA, _TICK_OUTER, _TICK_INNER
-    global _SUNBURST_C, _SUNBURST_S
-    global _EDGE_FADE_BASE
     global _NEEDLE_DAMPING, _NEEDLE_SPRING
 
     import logging
@@ -238,9 +209,6 @@ def init(device, cfg: dict) -> None:
     _BAND_Y0 = _INFO_Y + 4 * _SS
     _BAND_Y1 = _BAND_Y0 + _BAND_H
     _ROW_Y   = _BAND_Y1 + 10 * _SS
-    _SEP_SEGS[:] = [(int(_GAUGE_CX * f), b) for f, b in ((0.10, 0.22), (0.40, 0.42), (0.70, 0.62))]
-    _SEP_Y1  = _INFO_Y - 4 * _SS
-    _SEP_Y2  = _INFO_Y - 5 * _SS
 
     # Tick marks
     _TICK_OUTER = _GAUGE_R - 8  * _SS
@@ -259,37 +227,10 @@ def init(device, cfg: dict) -> None:
             (t % 10 == 0) or t == gauge_max,
         ))
 
-    # Pre-computed particle / drop x-positions
-    _GOOD_PARTICLE_X[:] = [(i * 17 * _SS + 11 * _SS) % _W for i in range(14)]
-    _CAUTION_DROP_BX[:] = [(i * 12 * _SS) % _W for i in range(20)]
-
-    # Sine tables
-    _BWAVE_FREQ   = 2 * math.pi / (22 * _SS)
+    # Sine table for the marine idle-strip wave accent
     _MARINE_WAVE_FREQ = 2 * math.pi / (55 * _SS)
-    _BWAVE_PERIOD  = 22 * _SS
     _MARINE_PERIOD = 55 * _SS
-    _BWAVE_TABLE[:]       = [int(3 * _SS * math.sin(_BWAVE_FREQ   * x)) for x in range(_BWAVE_PERIOD)]
     _MARINE_WAVE_TABLE[:] = [int(3 * _SS * math.sin(_MARINE_WAVE_FREQ * x)) for x in range(_MARINE_PERIOD)]
-
-    _GOOD_WAVE_PARAMS[:] = [
-        (10,  (0, 122, 79), 70, 3),
-        (30,  (0, 105, 68), 90, 5),
-        (52,  (0,  90, 58), 80, 4),
-        (74,  (0,  75, 48), 65, 3),
-        (96,  (0,  59, 39), 80, 4),
-        (118, (0,  43, 30), 95, 5),
-    ]
-    _GOOD_WAVE_FREQS[:]   = [2 * math.pi / (wl * _SS) for (_, _, wl, _) in _GOOD_WAVE_PARAMS]
-    _GOOD_WAVE_PERIODS[:] = [wl * _SS for (_, _, wl, _) in _GOOD_WAVE_PARAMS]
-    _GOOD_WAVE_TABLES[:]  = [
-        [int(amp * _SS * math.sin(_GOOD_WAVE_FREQS[i] * x)) for x in range(_GOOD_WAVE_PERIODS[i])]
-        for i, (_, _, wl, amp) in enumerate(_GOOD_WAVE_PARAMS)
-    ]
-
-    _SUNBURST_C[:] = [math.cos(math.radians(i * 30)) for i in range(12)]
-    _SUNBURST_S[:] = [math.sin(math.radians(i * 30)) for i in range(12)]
-
-    _EDGE_FADE_BASE[:] = [(3 * _SS - x) / (3.0 * _SS) for x in range(3 * _SS)]
 
     _NEEDLE_DAMPING = 0.50 ** (1.0 / (frame_rate * 0.20))
     _NEEDLE_SPRING  = 0.28  / (frame_rate * 0.20)
@@ -358,125 +299,11 @@ def _draw_trend(d, cx: int, y: int, tr: str) -> None:
                fill=(85, 85, 85), width=3 * _SS)
 
 
-def _draw_wind_streaks(d, cx: int, cy: int, r: int, gust: float, frame: int) -> None:
-    speed = max(2, round(20 - gust * 0.4))
-    inner = r - 24 * _SS
-    n     = 7
-    for i in range(n):
-        phase = ((frame // speed + i * (100 // n)) % 100) / 100.0
-        ang   = math.pi * (1 - phase)
-        ca, sa = math.cos(ang), math.sin(ang)
-        bright = int(70 + 170 * math.sin(phase * math.pi))
-        perp   = ang + math.pi / 2
-        cp, sp = math.cos(perp), math.sin(perp)
-        hw     = 5 * _SS
-        x0 = cx + inner * ca
-        y0 = cy - inner * sa
-        x1 = int(x0 + hw * cp);  y1 = int(y0 - hw * sp)
-        x2 = int(x0 - hw * cp);  y2 = int(y0 + hw * sp)
-        d.line([(x1, y1), (x2, y2)],
-               fill=(max(0, bright - 20), max(0, bright - 10), bright),
-               width=2 * _SS)
-
-
-def _draw_info_bg(d, y_top: int, y_bot: int, status: str, frame: int) -> None:
-    frame_rate = _cfg["frame_rate"]
-    if status == "GO":
-        scroll = (frame * 2) % (80 * _SS)
-        for i, (wy_off, wc, wl_i, amp_i) in enumerate(_GOOD_WAVE_PARAMS):
-            wy = y_top + wy_off * _SS
-            if wy >= y_bot:
-                continue
-            period = _GOOD_WAVE_PERIODS[i]
-            table  = _GOOD_WAVE_TABLES[i]
-            base   = (scroll + i * 17 * _SS) % period
-            pts    = [(px, wy + table[(px + base) % period]) for px in range(_W + 1)]
-            d.line(pts, fill=wc, width=_SS)
-
-        span = y_bot - y_top
-        for i in range(14):
-            px_pos  = _GOOD_PARTICLE_X[i]
-            speed   = 1 + (i % 3)
-            py_off  = span - (frame * speed + i * (span // 14)) % span
-            py_pos  = y_top + int(py_off)
-            bright  = int(78 + 65 * math.sin(frame * math.pi / (frame_rate * 2.2) + i * 0.8))
-            pc = (0, int(bright * 0.72), int(bright * 0.46))
-            if y_top <= py_pos < y_bot:
-                d.point((px_pos, py_pos), fill=pc)
-                if py_pos + 1 < y_bot:
-                    d.point((px_pos, py_pos + 1), fill=(0, bright // 4, bright // 6))
-
-    elif status == "CAUTION":
-        info_h = y_bot - y_top
-        for i in range(20):
-            bx  = _CAUTION_DROP_BX[i]
-            t   = (frame * 2 + i * 7) % (info_h + 14 * _SS)
-            x0, y0 = bx,              y_top + t - 14 * _SS
-            x1, y1 = bx + 8 * _SS,   y0 + 10 * _SS
-            y0c = max(y0, y_top);  y1c = min(y1, y_bot)
-            if y1c <= y_top or y0c >= y_bot:
-                continue
-            bright = 100 + int(60 * math.sin(
-                frame * math.pi / (frame_rate * 1.5) + i * math.pi / 5))
-            rc = (int(bright * 0.18), int(bright * 0.32), int(bright * 0.90))
-            d.line([(x0, y0c), (x1, y1c)], fill=rc, width=2 * _SS)
-            if y1 >= y_bot - 5 * _SS:
-                sp  = min(1.0, (y1 - (y_bot - 5 * _SS)) / (5 * _SS))
-                sw  = max(1, int(4 * _SS * sp))
-                sy_s = min(y_bot - 1, y0 + 10 * _SS)
-                sc_s = (int(rc[0] * 0.5), int(rc[1] * 0.5), int(rc[2] * 0.5))
-                d.line([(x0 - sw, sy_s), (x0, sy_s - 2 * _SS)], fill=sc_s, width=_SS)
-                d.line([(x0, sy_s - 2 * _SS), (x0 + sw, sy_s)], fill=sc_s, width=_SS)
-
-        if (frame % (frame_rate * 9)) < 2:
-            bolt_f = frame % (frame_rate * 9)
-            lb  = int(160 * (1 - bolt_f / 2))
-            lc  = (int(lb * 0.55), int(lb * 0.70), lb)
-            lbx = _W // 3
-            d.line([(lbx,               y_top +  8 * _SS), (lbx - 10 * _SS, y_top + 42 * _SS)], fill=lc, width=2 * _SS)
-            d.line([(lbx - 10 * _SS,    y_top + 42 * _SS), (lbx +  8 * _SS, y_top + 80 * _SS)], fill=lc, width=2 * _SS)
-
-    else:  # NO-GO — wind streaks
-        flash = (frame * 2) % 100
-        if flash < 4:
-            flash_r = int(80 * (1 - flash / 4))
-            d.rectangle([0, y_top, _W - 1, y_bot], fill=(flash_r, 0, 0))
-        for row_off in (14, 50, 86, 112):
-            ry = y_top + row_off * _SS
-            if ry >= y_bot:
-                continue
-            for j in range(8):
-                sy = ry + (j % 3 - 1) * 6 * _SS
-                if sy < y_top or sy >= y_bot:
-                    continue
-                sx = int((_WINDY_BXS[j] * _SS - frame * _WINDY_SPD[j]) % _W)
-                ex = sx + _WINDY_LNS[j] * _SS
-                bright = 62 + int(42 * math.sin(
-                    frame * math.pi / (frame_rate * 0.8) + j * math.pi / 4))
-                sc = (bright, bright // 2, bright // 4)
-                if ex <= _W:
-                    d.line([(sx, sy), (ex, sy)], fill=sc, width=2 * _SS)
-                else:
-                    d.line([(sx, sy), (_W - 1, sy)], fill=sc, width=2 * _SS)
-                    d.line([(0,  sy), (ex % _W, sy)], fill=sc, width=2 * _SS)
-
-
 def _draw_marine_wave(d, frame: int, color: tuple, y_mid: int) -> None:
     offset = (frame * 2) % _MARINE_PERIOD
     pts = [(x, y_mid + _MARINE_WAVE_TABLE[(x + offset) % _MARINE_PERIOD])
            for x in range(_W + 1)]
     d.line(pts, fill=color, width=_SS)
-
-
-def _draw_edge_accents(d, accent: tuple, frame: int) -> None:
-    frame_rate = _cfg["frame_rate"]
-    pulse = 0.2 + 0.8 * abs(math.sin(frame * math.pi / (frame_rate * 2.5)))
-    scale = pulse * 0.35
-    fades = [f * scale for f in _EDGE_FADE_BASE]
-    for x in range(3 * _SS):
-        col = tuple(int(c * fades[x]) for c in accent)
-        d.line([(x, 18 * _SS), (x, _H - 1)], fill=col)
-        d.line([(_W - 1 - x, 18 * _SS), (_W - 1 - x, _H - 1)], fill=col)
 
 
 def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_str=None, age_minutes=None):
@@ -549,7 +376,7 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
                fill=(82, 82, 82), font=font_strip, anchor="lm")
 
 
-def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind=None, history=None, raw_gust=None):
+def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind=None):
     gauge_max   = _cfg["gauge_max"]
     good_mph    = _cfg["good_mph"]
     caution_mph = _cfg["caution_mph"]
@@ -558,36 +385,9 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     box     = (cx - r, cy - r, cx + r, cy + r)
     arc_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
 
-    ob = r + 10 * _SS
-    if stale:
-        ob_col = (42, 42, 42)
-    else:
-        zone_c = (_GREEN if actual_gust < good_mph
-                  else (_YELLOW if actual_gust <= caution_mph else _RED))
-        ob_p   = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (frame_rate * 2.5)))
-        ob_col = tuple(max(16, int(c * ob_p * 0.25)) for c in zone_c)
-    d.arc((cx - ob, cy - ob, cx + ob, cy + ob),
-          _GAUGE_ARC_START - 4, arc_end + 4, fill=ob_col, width=2 * _SS)
-
     d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(20, 20, 20), width=22 * _SS)
     d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(36, 36, 36), width=14 * _SS)
     d.arc(box, _GAUGE_ARC_START - 2, arc_end + 2, fill=(24, 24, 24), width= 6 * _SS)
-
-    if not stale and actual_gust < good_mph:
-        glow_r = 55 * _SS
-        glow_p = 0.10 + 0.06 * abs(math.sin(frame * math.pi / (frame_rate * 3.0)))
-        d.ellipse((cx - glow_r, cy - glow_r, cx + glow_r, cy + glow_r),
-                  fill=(0, int(185 * glow_p), int(80 * glow_p)))
-        ray_r = math.radians((frame * 2.5) % 360)
-        bc, bs = math.cos(ray_r), math.sin(ray_r)
-        for i in range(12):
-            ca_r = bc * _SUNBURST_C[i] - bs * _SUNBURST_S[i]
-            sa_r = bs * _SUNBURST_C[i] + bc * _SUNBURST_S[i]
-            b = int(12 + 8 * math.sin(frame * math.pi / (frame_rate * 2.5) + i * math.pi / 6))
-            d.line([
-                (int(cx + 20 * _SS * ca_r), int(cy + 20 * _SS * sa_r)),
-                (int(cx + 48 * _SS * ca_r), int(cy + 48 * _SS * sa_r))
-            ], fill=(0, b, b // 3), width=_SS)
 
     dim = 0.30 if stale else 1.0
     if stale:
@@ -613,16 +413,6 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
     d.arc(ibox, _GOOD_ARC_END,    _CAUTION_ARC_END, fill=_dim(_YELLOW, yd * 0.55), width=2 * _SS)
     d.arc(ibox, _CAUTION_ARC_END, arc_end,          fill=_dim(_RED,    rd * 0.55), width=2 * _SS)
 
-    if not stale:
-        zp = 0.28 + 0.26 * abs(math.sin(frame * math.pi / (frame_rate * 1.8)))
-        if needle_gust < good_mph:
-            za_s, za_e, zc = _GAUGE_ARC_START, _GOOD_ARC_END,    _GREEN
-        elif needle_gust <= caution_mph:
-            za_s, za_e, zc = _GOOD_ARC_END,    _CAUTION_ARC_END, _YELLOW
-        else:
-            za_s, za_e, zc = _CAUTION_ARC_END, arc_end,          _RED
-        d.arc(box, za_s, za_e, fill=_dim(zc, zp), width=26 * _SS)
-
     if needle_gust > 0.1 and not stale:
         na_end = _GAUGE_ARC_START + (needle_gust / gauge_max) * _GAUGE_ARC_SWEEP
         if na_end > _GAUGE_ARC_START:
@@ -632,9 +422,6 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         if na_end > _CAUTION_ARC_END:
             d.arc(box, _CAUTION_ARC_END, na_end, fill=(255, 80, 80), width=4 * _SS)
 
-    _draw_wind_streaks(d, cx, cy, r, raw_gust if raw_gust is not None else actual_gust, frame)
-
-    needle_deg = _GAUGE_ARC_START + (needle_gust / gauge_max) * _GAUGE_ARC_SWEEP
     for mph_val, tick_deg, x1, y1, x2, y2, is_major in _TICK_DATA:
         t_dim = dim * (0.7 if is_major else 0.45)
         if mph_val <= good_mph:
@@ -643,25 +430,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
             tick_c = _dim(_YELLOW, t_dim)
         else:
             tick_c = _dim(_RED, t_dim)
-        if not stale and needle_gust > 0:
-            prox = max(0.0, 1.0 - abs(tick_deg - needle_deg) / 14.0)
-            if prox > 0:
-                tick_c = tuple(min(255, int(c + 110 * prox)) for c in tick_c)
         d.line([(x1, y1), (x2, y2)], fill=tick_c, width=2 * _SS if is_major else _SS)
-
-    if history and len(history) >= 2 and not stale:
-        peak = max(history)
-        cur  = raw_gust if raw_gust is not None else actual_gust
-        if peak > cur + 0.3:
-            p_ang  = _gauge_ang(min(peak, gauge_max))
-            p_ca, p_sa = math.cos(p_ang), math.sin(p_ang)
-            po = (cx + (r + 4 * _SS) * p_ca, cy + (r + 4 * _SS) * p_sa)
-            pi = (cx + (r - 4 * _SS) * p_ca, cy + (r - 4 * _SS) * p_sa)
-            d.line([(int(po[0]), int(po[1])), (int(pi[0]), int(pi[1]))],
-                   fill=(220, 200, 55), width=2 * _SS)
-            lx = int(cx + (r + 15 * _SS) * p_ca)
-            ly = int(cy + (r + 15 * _SS) * p_sa)
-            d.text((lx, ly), f"{peak:.0f}", fill=(168, 148, 38), font=font_label, anchor="mm")
 
     if stale:
         sweep_pos = _GAUGE_ARC_START + (frame * 3) % _GAUGE_ARC_SWEEP
@@ -681,15 +450,6 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
 
     pct = min(max(needle_gust / gauge_max, 0), 1)
     ang = _gauge_ang(pct * gauge_max)
-    if not stale and actual_gust > caution_mph:
-        ang += math.radians(2.5 * math.sin(frame * math.pi / (frame_rate * 0.10)))
-    if not stale and needle_gust > 0.1:
-        glow_ang = _GAUGE_ARC_START + (needle_gust / gauge_max) * _GAUGE_ARC_SWEEP
-        glow_c   = ((0, 36, 18) if needle_gust < good_mph
-                    else ((42, 32, 0) if needle_gust <= caution_mph
-                          else (42, 8, 8)))
-        glow_w   = int((17 + 7 * abs(math.sin(frame * math.pi / (frame_rate * 0.7)))) * _SS)
-        d.arc(box, glow_ang - 7, glow_ang + 7, fill=glow_c, width=glow_w)
     ca, sa = math.cos(ang), math.sin(ang)
     perp   = ang - math.pi / 2
     cp, sp = math.cos(perp), math.sin(perp)
@@ -764,10 +524,7 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
     good_mph   = cfg["good_mph"]
     caution_mph = cfg["caution_mph"]
     stale_minutes = cfg["stale_minutes"]
-    frame_rate = cfg["frame_rate"]
     fog_spread_f = cfg["fog_spread_f"]
-    pres_fall_caution = cfg["pres_fall_caution"]
-    atmp_chilly_f = cfg["atmp_chilly_f"]
 
     feels_hi = None
     feels_wc = None
@@ -781,9 +538,7 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
         wc = logic.wind_chill_f(atmp, wind)
         if wc <= atmp - 3:
             feels_wc = wc
-    extreme_heat = feels_hi is not None and feels_hi >= 103
 
-    cond_wind, cond_wave, cond_temp = logic.condition_statuses(state, cfg)
     msg    = logic.status_label(composite, cfg)
     accent = _STATUS_CONFIG[msg][0]
     tr     = logic.trend(history)
@@ -793,21 +548,9 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
     cx = _GAUGE_CX
     cy = _GAUGE_CY
 
-    _draw_info_bg(d, _INFO_Y, _H - 1, msg, frame)
-
     stale = age is not None and age >= stale_minutes
 
-    if not stale:
-        halo_p   = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (frame_rate * 3.0)))
-        halo_end = _GAUGE_ARC_START + _GAUGE_ARC_SWEEP
-        for h_off, h_fac in ((r + 17 * _SS, 0.17), (r + 24 * _SS, 0.10)):
-            hc = tuple(max(0, int(c * h_fac * halo_p)) for c in accent)
-            if any(v > 0 for v in hc):
-                d.arc((cx - h_off, cy - h_off, cx + h_off, cy + h_off),
-                      _GAUGE_ARC_START - 8, halo_end + 8, fill=hc, width=2 * _SS)
-
-    _draw_gauge(d, cx, cy, r, needle_gust, composite, frame,
-                stale=stale, wind=wind, history=history, raw_gust=gust)
+    _draw_gauge(d, cx, cy, r, needle_gust, composite, frame, stale=stale, wind=wind)
 
     if age is not None:
         freshness = max(0.0, 1.0 - age / stale_minutes)
@@ -817,25 +560,16 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
             by = _INFO_Y - 7 * _SS
             d.line([(cx - bar_hw, by), (cx + bar_hw, by)], fill=(bright, bright, bright), width=_SS)
 
-    sep_p = 0.3 + 0.7 * abs(math.sin(frame * math.pi / (frame_rate * 3)))
-    for sx0, bfac in _SEP_SEGS:
-        sc_ = tuple(int(c * sep_p * bfac) for c in accent)
-        if any(v > 0 for v in sc_):
-            d.line([(sx0, _SEP_Y1), (_W - sx0, _SEP_Y1)], fill=sc_, width=_SS)
-            d.line([(sx0, _SEP_Y2), (_W - sx0, _SEP_Y2)], fill=tuple(v // 2 for v in sc_), width=_SS)
-
     _, badge_bg = _STATUS_CONFIG[msg]
     band_bg = badge_bg if stale else tuple(min(255, int(c * 0.65)) for c in accent)
     d.rectangle([0, _BAND_Y0, _W - 1, _BAND_Y1], fill=band_bg)
-    edge_p  = 0.5 + 0.5 * abs(math.sin(frame * math.pi / (frame_rate * 2.0)))
-    edge_c  = tuple(min(255, int(c * edge_p)) for c in accent) if not stale else (55, 55, 55)
+    edge_c  = accent if not stale else (55, 55, 55)
     d.line([(0, _BAND_Y0), (_W - 1, _BAND_Y0)], fill=edge_c, width=2 * _SS)
     d.line([(0, _BAND_Y1), (_W - 1, _BAND_Y1)], fill=tuple(c // 2 for c in edge_c), width=_SS)
-    vib_x  = [-1 * _SS, 0, 1 * _SS, 0][frame % 4] if msg == "NO-GO" and not stale else 0
     band_cy = _BAND_Y0 + _BAND_H // 2
     if not stale:
-        d.text((cx + vib_x + _SS, band_cy + _SS), msg, fill=(0, 0, 0), font=font_unit, anchor="mm")
-    d.text((cx + vib_x, band_cy), msg,
+        d.text((cx + _SS, band_cy + _SS), msg, fill=(0, 0, 0), font=font_unit, anchor="mm")
+    d.text((cx, band_cy), msg,
            fill=(60, 60, 60) if stale else (255, 255, 255),
            font=font_unit, anchor="mm")
 
@@ -846,52 +580,7 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
         d.text((bx + _SS, band_cy + _SS), badge_text, fill=(0, 0, 0),       font=font_label, anchor="lm")
         d.text((bx,       band_cy),       badge_text, fill=(200, 140, 0),   font=font_label, anchor="lm")
 
-    _DOT_C = {"GO": _GREEN, "CAUTION": _YELLOW, "NO-GO": _RED}
-    fog_risk     = dewp is not None and atmp is not None and (atmp - dewp) < fog_spread_f
-    pres_falling = False
-    if pres is not None and len(pres_history) >= 3:
-        oldest_p = next((p for p in reversed(pres_history) if p is not None), None)
-        pres_falling = oldest_p is not None and (oldest_p - pres) >= pres_fall_caution
-    cold_air     = atmp is not None and atmp < atmp_chilly_f
-    cond_weather = "CAUTION" if (fog_risk or pres_falling or cold_air or extreme_heat) else "GO"
-    weather_known = dewp is not None or pres is not None or atmp is not None
-    dot_r = 3 * _SS
-    dot_y = band_cy
-    for j, (cond, has_data) in enumerate((
-            (cond_wind,    True),
-            (cond_wave,    wvht is not None),
-            (cond_temp,    wtmp is not None),
-            (cond_weather, weather_known),
-    )):
-        dx = _W - (9 + j * 8) * _SS
-        dc = _DOT_C[cond] if (has_data and not stale) else (50, 50, 50)
-        d.ellipse((dx - dot_r, dot_y - dot_r, dx + dot_r, dot_y + dot_r), fill=dc)
-
     row_y = _ROW_Y
-    if not stale and (wtmp is not None or wvht is not None
-                      or fog_risk or pres_falling or cold_air or extreme_heat):
-        d.rectangle([0, row_y - 9 * _SS, _W - 1, row_y + 9 * _SS],
-                    fill=tuple(max(0, c // 4) for c in accent))
-        sh = _SS
-        if wtmp is not None:
-            wt_str  = f"{wtmp:.0f}° water"
-            wt_fill = _DOT_C[cond_temp]
-            d.text((8 * _SS + sh, row_y + sh), wt_str, fill=(0, 0, 0), font=font_label, anchor="lm")
-            d.text((8 * _SS,      row_y),       wt_str, fill=wt_fill,   font=font_label, anchor="lm")
-        if fog_risk or pres_falling or cold_air or extreme_heat:
-            wx_parts = []
-            if fog_risk:     wx_parts.append("~Fog")
-            if pres_falling: wx_parts.append("↓P")
-            if cold_air:     wx_parts.append(f"Chilly {atmp:.0f}°")
-            if extreme_heat: wx_parts.append(f"HI {feels_hi:.0f}°!")
-            wx_str = "  ".join(wx_parts)
-            d.text((cx + sh, row_y + sh), wx_str, fill=(0, 0, 0), font=font_label, anchor="mm")
-            d.text((cx,      row_y),       wx_str, fill=_YELLOW,    font=font_label, anchor="mm")
-        if wvht is not None:
-            wv_str  = (f"{wvht:.1f}ft/{dpd:.0f}s" if dpd is not None else f"{wvht:.1f}ft waves")
-            wv_fill = _DOT_C[cond_wave]
-            d.text((_W - 8 * _SS + sh, row_y + sh), wv_str, fill=(0, 0, 0), font=font_label, anchor="rm")
-            d.text((_W - 8 * _SS,      row_y),       wv_str, fill=wv_fill,   font=font_label, anchor="rm")
 
     if stale:
         gust_fill = (50, 50, 50);  mph_fill = (40, 40, 40)
@@ -951,21 +640,6 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
     if dewp is not None and atmp is not None and (atmp - dewp) < fog_spread_f:
         marine_parts.append("~Fog")
     marine_str = "  ".join(marine_parts) if marine_parts else None
-
-    _draw_edge_accents(d, accent, frame)
-
-    accent_dim  = tuple(c // 4  for c in accent)
-    accent_dim2 = tuple(c // 10 for c in accent)
-    accent_dim3 = tuple(c // 22 for c in accent)
-    bwave_off   = (frame * 3) % _BWAVE_PERIOD
-    bwave_row1  = [(bx, _H - 1 - _BWAVE_TABLE[(bx + bwave_off) % _BWAVE_PERIOD]) for bx in range(_W)]
-    bwave_row2  = [(bx, by - 1) for bx, by in bwave_row1 if by > 0]
-    bwave_row3  = [(bx, by - 2) for bx, by in bwave_row1 if by > 1]
-    d.line(bwave_row1, fill=accent_dim)
-    if bwave_row2:
-        d.line(bwave_row2, fill=accent_dim2)
-    if bwave_row3:
-        d.line(bwave_row3, fill=accent_dim3)
 
     _draw_alert_strip(d, alerts, frame, accent, y0=0,
                       marine_str=marine_str, wind_str=wind_str, age_minutes=age)
