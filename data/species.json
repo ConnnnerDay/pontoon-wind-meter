@@ -1,5 +1,5 @@
 {
-  "_comment": "Common sport fish for Wilmington / Wrightsville Beach, NC. Conditions notes reference the go/no-go thresholds used by pontoon_meter.py.",
+  "_comment": "Common sport fish around Wilmington / Wrightsville Beach, NC. Reference only; the app does not read this file. GO/CAUTION in the notes means the meter's verdict, which is for the ICW and sounds, not the ocean.",
   "species": [
     {
       "name": "Red Drum",
@@ -76,7 +76,7 @@
       "typical_rigs": ["jig under buoy/ray", "live eel rig", "circle-hook chunk bait"],
       "best_baits": ["live eel", "crab", "large jig"],
       "season": ["spring", "summer"],
-      "conditions_note": "Open-water species; only attempt on full GO days with calm seas"
+      "conditions_note": "Caught off the beaches and inlets. Outside the inlet is no place for a pontoon; this is a center-console trip"
     },
     {
       "name": "King Mackerel",
@@ -87,7 +87,7 @@
       "typical_rigs": ["slow-troll live bait on wire stinger rig", "large spoon troll"],
       "best_baits": ["live menhaden", "live bluefish", "large spoon"],
       "season": ["spring", "summer", "fall"],
-      "conditions_note": "Trolling species; requires GO conditions and calm 1–3 ft seas"
+      "conditions_note": "Trolled in the ocean, usually miles off the beach. Not a pontoon trip, whatever the meter says"
     },
     {
       "name": "Black Drum",
@@ -120,7 +120,7 @@
       "typical_rigs": ["trolling skirt", "ballyhoo on circle hook", "pitch bait on jig"],
       "best_baits": ["ballyhoo", "flying fish", "squid"],
       "season": ["summer"],
-      "conditions_note": "Gulf Stream species (60+ miles offshore); only safe on full GO days with <2 ft seas"
+      "conditions_note": "Gulf Stream fish, roughly 40+ miles offshore. Not a pontoon trip under any conditions"
     },
     {
       "name": "Striped Bass",

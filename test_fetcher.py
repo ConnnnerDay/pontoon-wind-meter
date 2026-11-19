@@ -1,10 +1,11 @@
 """Tests for data/fetcher.py — run with: pytest test_fetcher.py"""
 import json
+from datetime import datetime, timezone
 import threading
 import time
 
 import disk_cache
-from data.fetcher import _apply_cache
+from data.fetcher import _apply_cache, update_histories
 
 
 def _backdate_saved_at(path: str, seconds_ago: float) -> None:
@@ -65,3 +66,52 @@ def test_apply_cache_rejects_stale_snapshot(tmp_path):
     state = _base_state()
     assert _apply_cache(state, threading.Lock(), cfg) is False
     assert state["cached"] is False
+
+
+def test_update_histories_skips_repeat_observation():
+    state = {"gust_history": [], "pres_history": [], "obs_time": None}
+    update_histories(state, 10.0, 1015.0, "2026-06-01 12:00")
+    update_histories(state, 10.0, 1015.0, "2026-06-01 12:00")  # same obs, polled again
+    assert state["gust_history"] == [10.0]
+    assert state["pres_history"] == [1015.0]
+    update_histories(state, 14.0, 1014.0, "2026-06-01 12:10")
+    assert state["gust_history"] == [14.0, 10.0]
+    assert state["pres_history"] == [1014.0, 1015.0]
+
+
+def test_update_histories_caps_length_and_skips_missing_pressure():
+    state = {"gust_history": [], "pres_history": [], "obs_time": None}
+    for i in range(10):
+        update_histories(state, float(i), None, f"2026-06-01 12:{i:02d}")
+    assert state["gust_history"] == [9.0, 8.0, 7.0, 6.0, 5.0, 4.0]
+    assert state["pres_history"] == []
+
+
+def test_parse_alerts_keeps_highest_severity_and_end_time():
+    from data.fetcher import parse_alerts
+    data = {"features": [
+        {"properties": {"event": "Gale Warning", "severity": "Moderate",
+                        "expires": "2026-07-01T12:00:00-04:00", "ends": "2026-07-01T18:00:00-04:00"}},
+        {"properties": {"event": "Gale Warning", "severity": "Severe",
+                        "expires": "2026-07-01T14:00:00-04:00", "ends": None}},
+        {"properties": {"event": "Rip Current Statement", "severity": "Minor"}},
+        {"properties": {"event": ""}},
+    ]}
+    alerts = {a[0]: a for a in parse_alerts(data)}
+    assert set(alerts) == {"GALE WARNING", "RIP CURRENT STATEMENT"}
+    event, sev, until = alerts["GALE WARNING"]
+    assert sev == "Severe"
+    assert until == datetime(2026, 7, 1, 22, 0, tzinfo=timezone.utc).timestamp()
+    assert alerts["RIP CURRENT STATEMENT"][2] is None
+
+
+def test_drop_expired_alerts():
+    from data.fetcher import drop_expired_alerts
+    now = 1_000_000.0
+    alerts = [("A", "Severe", now - 1), ("B", "Severe", now + 60), ("C", "Minor", None)]
+    assert [a[0] for a in drop_expired_alerts(alerts, now)] == ["B", "C"]
+
+
+def test_alert_floor_accepts_triples():
+    from logic import alert_floor
+    assert alert_floor([("GALE WARNING", "Severe", None)], {"caution_mph": 30.0}) == 30.5

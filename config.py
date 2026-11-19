@@ -5,7 +5,7 @@ Priority (highest → lowest):
   1. CLI arguments  (--good-mph 12, --config myconfig.yml, …)
   2. Environment variables  (PONTOON_GOOD_MPH=12, …)
   3. config.yaml / the file named by --config
-  4. Built-in defaults  (same values as the original constants)
+  4. Built-in defaults below
 
 Usage::
 
@@ -31,8 +31,8 @@ except ImportError:
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parent / "config.yaml"
 
-# Built-in defaults — these are the original hard-coded constants so the app
-# works identically without a config.yaml present.
+# Defaults used for anything config.yaml, env vars, and CLI don't set.
+# Keep these in sync with config.yaml.
 _DEFAULTS: dict[str, Any] = {
     # location
     "location_name":      "Wrightsville Beach / ICW",
@@ -66,6 +66,18 @@ _DEFAULTS: dict[str, Any] = {
     "cache_max_age_minutes":  180,
 }
 
+def _parse_bool(v: Any) -> bool:
+    """Accept YAML booleans and the usual strings ("no", "off", "0", ...)."""
+    if isinstance(v, bool):
+        return v
+    text = str(v).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off", ""):
+        return False
+    raise ValueError(f"not a boolean: {v!r}")
+
+
 # env-var suffix → (config key, cast function)
 _ENV_MAP: dict[str, tuple[str, type]] = {
     "GOOD_MPH":           ("good_mph",           float),
@@ -90,7 +102,7 @@ _ENV_MAP: dict[str, tuple[str, type]] = {
     "COOPS_STATION":           ("coops_station",         str),
     "LAT":                     ("lat",                   float),
     "LON":                     ("lon",                   float),
-    "CACHE_ENABLED":           ("cache_enabled",         lambda v: v.lower() not in ("0", "false", "no")),
+    "CACHE_ENABLED":           ("cache_enabled",         _parse_bool),
     "CACHE_PATH":              ("cache_path",            str),
     "CACHE_MAX_AGE_MINUTES":   ("cache_max_age_minutes", int),
 }
@@ -104,44 +116,64 @@ def _load_yaml(path: Path) -> dict:
     if not _YAML_AVAILABLE:
         logging.warning("PyYAML not installed; ignoring %s — install pyyaml to use config.yaml", path)
         return {}
-    with open(path) as fh:
-        return _yaml.safe_load(fh) or {}
+    try:
+        with open(path) as fh:
+            data = _yaml.safe_load(fh) or {}
+    except (OSError, _yaml.YAMLError) as exc:
+        logging.error("Config: cannot read %s (%s) — using defaults", path, exc)
+        return {}
+    if not isinstance(data, dict):
+        logging.error("Config: %s is not a YAML mapping — using defaults", path)
+        return {}
+    return data
 
 
-def _flatten_yaml(data: dict) -> dict[str, Any]:
-    """Convert nested YAML sections into a flat key→value dict."""
-    flat: dict[str, Any] = {}
-
-    loc = data.get("location", {})
-    if "name"          in loc: flat["location_name"]  = str(loc["name"])
-    if "ndbc_station"  in loc: flat["ndbc_station"]   = str(loc["ndbc_station"])
-    if "coops_station" in loc: flat["coops_station"]  = str(loc["coops_station"])
-    if "lat"           in loc: flat["lat"]             = float(loc["lat"])
-    if "lon"           in loc: flat["lon"]             = float(loc["lon"])
-
-    thr = data.get("thresholds", {})
-    for key in (
+# YAML section → {yaml key: (config key, cast)}
+_YAML_MAP: dict[str, dict[str, tuple[str, Any]]] = {
+    "location": {
+        "name":          ("location_name", str),
+        "ndbc_station":  ("ndbc_station",  str),
+        "coops_station": ("coops_station", str),
+        "lat":           ("lat",           float),
+        "lon":           ("lon",           float),
+    },
+    "thresholds": {k: (k, float) for k in (
         "good_mph", "caution_mph", "gauge_max", "stale_minutes",
         "wave_good_ft", "wave_caution_ft", "wave_chop_dpd", "wave_swell_dpd",
         "temp_cool_f", "temp_cold_f", "atmp_warm_f", "atmp_chilly_f",
         "fog_spread_f", "pres_fall_caution",
-    ):
-        if key in thr:
-            flat[key] = float(thr[key])
+    )},
+    "polling": {k: (k, int) for k in (
+        "poll_interval", "alerts_interval", "frame_rate", "web_port",
+    )},
+    "cache": {
+        "enabled":         ("cache_enabled",         _parse_bool),
+        "path":            ("cache_path",            str),
+        "max_age_minutes": ("cache_max_age_minutes", int),
+    },
+}
 
-    pol = data.get("polling", {})
-    for key in ("poll_interval", "alerts_interval", "frame_rate", "web_port"):
-        if key in pol:
-            flat[key] = int(pol[key])
 
-    cac = data.get("cache", {})
-    if "enabled" in cac:
-        flat["cache_enabled"] = bool(cac["enabled"])
-    if "path" in cac:
-        flat["cache_path"] = str(cac["path"])
-    if "max_age_minutes" in cac:
-        flat["cache_max_age_minutes"] = int(cac["max_age_minutes"])
+def _flatten_yaml(data: dict) -> dict[str, Any]:
+    """Convert nested YAML sections into a flat key→value dict.
 
+    An empty section (``location:`` with nothing under it) is fine. A value
+    that can't be converted is logged and skipped, so the default is used.
+    """
+    flat: dict[str, Any] = {}
+    for section, keys in _YAML_MAP.items():
+        values = data.get(section) or {}
+        if not isinstance(values, dict):
+            logging.warning("Config: section %r should be a mapping — ignored", section)
+            continue
+        for ykey, (ckey, cast) in keys.items():
+            if ykey not in values or values[ykey] is None:
+                continue
+            try:
+                flat[ckey] = cast(values[ykey])
+            except (TypeError, ValueError):
+                logging.warning("Config: %s.%s=%r is invalid — using default %r",
+                                section, ykey, values[ykey], _DEFAULTS[ckey])
     return flat
 
 

@@ -22,13 +22,14 @@ from pathlib import Path
 
 _TIMESTAMP_KEY = "_saved_at"
 
-# State fields that are worth persisting across restarts / network outages.
-# History lists are included so the trend arrow and pressure chart survive
-# brief connectivity gaps; alerts are excluded (they have their own timer).
+# State fields persisted across restarts / network outages. The history lists
+# (and obs_time, which dedupes them) are included so the trend arrow and the
+# falling-pressure check survive a restart. Alerts are left out; they're
+# refetched on their own timer.
 CACHE_FIELDS = (
     "wind", "gust", "wdir", "age",
     "wtmp", "wvht", "atmp", "dpd", "dewp",
-    "pres", "pres_history", "gust_history",
+    "pres", "pres_history", "gust_history", "obs_time",
 )
 
 

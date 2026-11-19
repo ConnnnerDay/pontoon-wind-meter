@@ -2,13 +2,13 @@
 import pytest
 from datetime import datetime, timezone, timedelta
 
-from ndbc import ms_to_mph, celsius_to_f, m_to_ft, wind_direction, parse_ndbc, obs_age_minutes
+from ndbc import ms_to_mph, celsius_to_f, m_to_ft, wind_direction, parse_ndbc, obs_age_minutes, obs_time
 
-# Minimal realistic NDBC realtime2 sample
+# Minimal NDBC realtime2 sample (realtime2 files use a 4-digit year)
 SAMPLE = """\
 #YY  MM DD hh mm WDIR WSPD  GST  WVHT
 #yr  mo dy hr mn  deg m/s  m/s     m
-24 05 28 12 00  210  5.1  6.2    MM
+2024 05 28 12 00  210  5.1  6.2    MM
 """
 
 SAMPLE_WITH_PREAMBLE = "#Advisory: high winds expected today\n" + SAMPLE
@@ -16,7 +16,7 @@ SAMPLE_WITH_PREAMBLE = "#Advisory: high winds expected today\n" + SAMPLE
 SAMPLE_MISSING_WIND = """\
 #YY  MM DD hh mm WDIR WSPD  GST
 #yr  mo dy hr mn  deg m/s  m/s
-24 05 28 12 00   MM   MM   MM
+2024 05 28 12 00   MM   MM   MM
 """
 
 
@@ -137,7 +137,7 @@ def test_parse_ndbc_empty_raises():
 def test_obs_age_minutes_recent():
     now = datetime.now(timezone.utc)
     row = {
-        "YY": f"{now.year - 2000:02d}",
+        "YY": f"{now.year}",
         "MM": f"{now.month:02d}",
         "DD": f"{now.day:02d}",
         "hh": f"{now.hour:02d}",
@@ -151,7 +151,7 @@ def test_obs_age_minutes_recent():
 def test_obs_age_minutes_one_hour_ago():
     t = datetime.now(timezone.utc) - timedelta(hours=1)
     row = {
-        "YY": f"{t.year - 2000:02d}",
+        "YY": f"{t.year}",
         "MM": f"{t.month:02d}",
         "DD": f"{t.day:02d}",
         "hh": f"{t.hour:02d}",
@@ -167,3 +167,27 @@ def test_obs_age_minutes_missing_fields():
 
 def test_obs_age_minutes_bad_values():
     assert obs_age_minutes({"YY": "MM", "MM": "05", "DD": "28", "hh": "12", "mm": "00"}) is None
+
+
+def test_obs_time_format():
+    row = {"YY": "2026", "MM": "6", "DD": "1", "hh": "9", "mm": "5"}
+    assert obs_time(row) == "2026-06-01 09:05"
+
+
+def test_obs_time_missing_fields():
+    assert obs_time({"YY": "26"}) is None
+
+
+def test_obs_age_minutes_four_digit_year_two_hours_old():
+    """Regression: a 4-digit year used to become 4024, so age clamped to 0."""
+    t = datetime.now(timezone.utc) - timedelta(hours=2)
+    row = {"YY": str(t.year), "MM": str(t.month), "DD": str(t.day),
+           "hh": str(t.hour), "mm": str(t.minute)}
+    assert 118 <= obs_age_minutes(row) <= 122
+
+
+def test_obs_age_minutes_accepts_two_digit_year():
+    t = datetime.now(timezone.utc) - timedelta(hours=1)
+    row = {"YY": f"{t.year - 2000:02d}", "MM": str(t.month), "DD": str(t.day),
+           "hh": str(t.hour), "mm": str(t.minute)}
+    assert 58 <= obs_age_minutes(row) <= 62

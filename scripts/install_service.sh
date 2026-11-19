@@ -9,8 +9,9 @@
 #   2. Copies project files to /home/pizero/pontoon-wind-meter.
 #   3. Installs / updates Python packages into /home/pizero/tftenv.
 #   4. Installs / updates the systemd unit.
-#   5. Reloads systemd, enables and restarts the service.
-#   6. Prints current service status.
+#   5. Reloads systemd and enables the service.
+#   6. Creates the cache directory.
+#   7. Restarts the service and prints its status.
 
 set -euo pipefail
 

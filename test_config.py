@@ -184,3 +184,40 @@ def test_priority_order(tmp_path, monkeypatch):
     args = build_arg_parser().parse_args(["--caution-mph", "19"])
     cfg  = load_config(args=args, config_path=p)
     assert cfg["caution_mph"] == 19.0
+
+
+def test_empty_section_does_not_crash(tmp_path):
+    p = tmp_path / "c.yaml"
+    p.write_text("location:\nthresholds:\n  good_mph: 20\n")
+    cfg = load_config(config_path=p)
+    assert cfg["good_mph"] == 20.0
+    assert cfg["ndbc_station"] == "41038"
+
+
+def test_bad_value_falls_back_to_default(tmp_path):
+    p = tmp_path / "c.yaml"
+    p.write_text("thresholds:\n  good_mph: abc\n  caution_mph: 28\n")
+    cfg = load_config(config_path=p)
+    assert cfg["good_mph"] == 22.0
+    assert cfg["caution_mph"] == 28.0
+
+
+def test_invalid_yaml_uses_defaults(tmp_path):
+    p = tmp_path / "c.yaml"
+    p.write_text("thresholds: [\n")
+    assert load_config(config_path=p)["good_mph"] == 22.0
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("false", False), ("no", False), ("off", False), ("0", False),
+    ("true", True), ("yes", True), ("on", True), ("1", True),
+])
+def test_cache_enabled_env_parsing(monkeypatch, tmp_path, raw, expected):
+    monkeypatch.setenv("PONTOON_CACHE_ENABLED", raw)
+    assert load_config(config_path=tmp_path / "missing.yaml")["cache_enabled"] is expected
+
+
+def test_cache_enabled_quoted_string_in_yaml(tmp_path):
+    p = tmp_path / "c.yaml"
+    p.write_text('cache:\n  enabled: "no"\n')
+    assert load_config(config_path=p)["cache_enabled"] is False

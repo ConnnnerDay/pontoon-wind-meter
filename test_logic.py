@@ -10,7 +10,8 @@ from logic import (
     status_label,
 )
 
-# Default config matching the original hard-coded constants
+# Fixed test thresholds (deliberately not the shipped defaults, so tests don't
+# move when config.yaml is retuned).
 _CFG = {
     "good_mph":           15.0,
     "caution_mph":        23.0,
@@ -376,3 +377,21 @@ def test_custom_thresholds_respected():
 ])
 def test_status_label_boundaries(score, expected):
     assert status_label(score, _CFG) == expected
+
+
+def test_cold_air_alone_reaches_caution():
+    """Feels-like below temp_cold_f on a calm day must read CAUTION."""
+    s = _state(gust=5.0, wind=4.0, atmp=40.0)
+    assert status_label(composite_score(s, _CFG), _CFG) == "CAUTION"
+
+
+def test_chilly_air_alone_stays_go():
+    """55°F on a light breeze is a jacket day, not a CAUTION day."""
+    s = _state(gust=5.0, wind=2.0, atmp=55.0)
+    assert status_label(composite_score(s, _CFG), _CFG) == "GO"
+
+
+def test_warm_relief_never_rescues_nogo_gust():
+    """Hot air must not pull a NO-GO gust back into CAUTION."""
+    s = _state(gust=_CFG["caution_mph"] + 2, wind=15.0, atmp=100.0, dewp=40.0)
+    assert status_label(composite_score(s, _CFG), _CFG) == "NO-GO"

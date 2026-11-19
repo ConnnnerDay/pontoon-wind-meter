@@ -11,6 +11,7 @@ downscaled to the device resolution before pushing to the ILI9341.
 from __future__ import annotations
 
 import io
+import logging
 import math
 import os
 import threading
@@ -188,7 +189,6 @@ def init(device, cfg: dict) -> None:
     global _EDGE_FADE_BASE
     global _NEEDLE_DAMPING, _NEEDLE_SPRING
 
-    import logging
     _cfg    = cfg
     _device = device
     _SS     = 2
@@ -532,7 +532,7 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
         return
 
     idx       = (frame // (frame_rate * 4)) % len(alerts)
-    name, sev = alerts[idx]
+    name, sev = alerts[idx][:2]
     color     = _ALERT_COLORS.get(sev, _YELLOW)
 
     pulse     = 0.38 + 0.62 * abs(math.sin(frame * math.pi / (frame_rate * 0.7)))
@@ -667,7 +667,7 @@ def _draw_gauge(d, cx, cy, r, needle_gust, actual_gust, frame, stale=False, wind
         sweep_pos = _GAUGE_ARC_START + (frame * 3) % _GAUGE_ARC_SWEEP
         trail_s   = max(_GAUGE_ARC_START, sweep_pos - 28)
         d.arc(box, trail_s, sweep_pos, fill=(0, 22, 11), width=14 * _SS)
-        d.text((cx, cy), "STALE", fill=(72, 72, 72), font=font_label, anchor="mm")
+        d.text((cx, cy + 22 * _SS), "STALE", fill=(110, 110, 110), font=font_label, anchor="mm")
 
     if wind is not None and not stale:
         w_ang  = _gauge_ang(min(wind, gauge_max))
@@ -839,12 +839,14 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
            fill=(60, 60, 60) if stale else (255, 255, 255),
            font=font_unit, anchor="mm")
 
-    # CACHED badge — amber pill on the left of the status band when showing offline data
+    # CACHED label: showing the last saved reading because the fetch failed.
+    # Sits just above the band, left of the gauge; the status word fills the band.
     if state.get("cached"):
         badge_text = "CACHED"
         bx = 6 * _SS
-        d.text((bx + _SS, band_cy + _SS), badge_text, fill=(0, 0, 0),       font=font_label, anchor="lm")
-        d.text((bx,       band_cy),       badge_text, fill=(200, 140, 0),   font=font_label, anchor="lm")
+        by = _BAND_Y0 - 8 * _SS
+        d.text((bx + _SS, by + _SS), badge_text, fill=(0, 0, 0),     font=font_label, anchor="lm")
+        d.text((bx,       by),       badge_text, fill=(200, 140, 0), font=font_label, anchor="lm")
 
     _DOT_C = {"GO": _GREEN, "CAUTION": _YELLOW, "NO-GO": _RED}
     fog_risk     = dewp is not None and atmp is not None and (atmp - dewp) < fog_spread_f
@@ -872,12 +874,14 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
                       or fog_risk or pres_falling or cold_air or extreme_heat):
         d.rectangle([0, row_y - 9 * _SS, _W - 1, row_y + 9 * _SS],
                     fill=tuple(max(0, c // 4) for c in accent))
-        sh = _SS
+        sh  = _SS
+        pad = 8 * _SS
+        gap = 6 * _SS
+        wt_str = wv_str = wx_str = ""
         if wtmp is not None:
-            wt_str  = f"{wtmp:.0f}° water"
-            wt_fill = _DOT_C[cond_temp]
-            d.text((8 * _SS + sh, row_y + sh), wt_str, fill=(0, 0, 0), font=font_label, anchor="lm")
-            d.text((8 * _SS,      row_y),       wt_str, fill=wt_fill,   font=font_label, anchor="lm")
+            wt_str = f"{wtmp:.0f}° water"
+        if wvht is not None:
+            wv_str = f"{wvht:.1f}ft/{dpd:.0f}s" if dpd is not None else f"{wvht:.1f}ft waves"
         if fog_risk or pres_falling or cold_air or extreme_heat:
             wx_parts = []
             if fog_risk:     wx_parts.append("~Fog")
@@ -885,13 +889,34 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
             if cold_air:     wx_parts.append(f"Chilly {atmp:.0f}°")
             if extreme_heat: wx_parts.append(f"HI {feels_hi:.0f}°!")
             wx_str = "  ".join(wx_parts)
-            d.text((cx + sh, row_y + sh), wx_str, fill=(0, 0, 0), font=font_label, anchor="mm")
-            d.text((cx,      row_y),       wx_str, fill=_YELLOW,    font=font_label, anchor="mm")
-        if wvht is not None:
-            wv_str  = (f"{wvht:.1f}ft/{dpd:.0f}s" if dpd is not None else f"{wvht:.1f}ft waves")
+
+        def _w(t):
+            return d.textlength(t, font=font_label) if t else 0
+
+        # The row is only ~240 px wide. When the warnings would collide with
+        # the water/wave text, drop the word "water", then put the warnings
+        # in whatever space is left between the two sides.
+        if wx_str and wt_str and _w(wt_str) + _w(wx_str) + _w(wv_str) + 2 * gap > _W - 2 * pad:
+            wt_str = f"{wtmp:.0f}°"
+        left_end    = pad + _w(wt_str) + (gap if wt_str else 0)
+        right_start = _W - pad - _w(wv_str) - (gap if wv_str else 0)
+
+        if wt_str:
+            wt_fill = _DOT_C[cond_temp]
+            d.text((pad + sh, row_y + sh), wt_str, fill=(0, 0, 0), font=font_label, anchor="lm")
+            d.text((pad,      row_y),       wt_str, fill=wt_fill,   font=font_label, anchor="lm")
+        if wx_str:
+            wx_str = _fit_text(d, wx_str, font_label, int(right_start - left_end))
+            if _w(wx_str) <= 2 * min(cx - left_end, right_start - cx):
+                wx_x, anchor = cx, "mm"           # fits centred
+            else:
+                wx_x, anchor = int(left_end), "lm"  # off-centre, between the two sides
+            d.text((wx_x + sh, row_y + sh), wx_str, fill=(0, 0, 0), font=font_label, anchor=anchor)
+            d.text((wx_x,      row_y),       wx_str, fill=_YELLOW,   font=font_label, anchor=anchor)
+        if wv_str:
             wv_fill = _DOT_C[cond_wave]
-            d.text((_W - 8 * _SS + sh, row_y + sh), wv_str, fill=(0, 0, 0), font=font_label, anchor="rm")
-            d.text((_W - 8 * _SS,      row_y),       wv_str, fill=wv_fill,   font=font_label, anchor="rm")
+            d.text((_W - pad + sh, row_y + sh), wv_str, fill=(0, 0, 0), font=font_label, anchor="rm")
+            d.text((_W - pad,      row_y),       wv_str, fill=wv_fill,   font=font_label, anchor="rm")
 
     if stale:
         gust_fill = (50, 50, 50);  mph_fill = (40, 40, 40)
@@ -901,7 +926,7 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
         gust_fill = (255, 215, 50); mph_fill = (205, 170, 35)
     else:
         gust_fill = (240, 240, 240); mph_fill = (180, 180, 180)
-    gust_int = min(55, max(0, round(gust)))
+    gust_int = min(55, max(0, round(gust or 0.0)))
     num_str  = str(gust_int)
     num_w    = _GUST_WIDTHS[gust_int]
     unit_w   = _MPH_UNIT_W
@@ -913,12 +938,12 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
     d.text((grp_x + num_w + 10 * _SS,   num_y + 16 * _SS + 2 * _SS), "mph",   fill=(0, 0, 0),  font=font_unit, anchor="lm")
     d.text((grp_x + num_w +  8 * _SS,   num_y + 16 * _SS),            "mph",   fill=mph_fill,   font=font_unit, anchor="lm")
 
-    if tr is not None:
+    if tr is not None and not stale:
         _draw_trend(d, 18 * _SS, num_y - 12 * _SS, tr)
 
-    dir_tag  = f"  {wdir}" if wdir else ""
+    dir_tag  = f" {wdir}" if wdir and wdir != "---" else ""
     if gust is not None and wind is not None and abs(gust - wind) > 1.0:
-        wind_str = f"Gust {gust:.0f}  Wind {wind:.0f} mph{dir_tag}"
+        wind_str = f"Wind {wind:.0f}G{gust:.0f} mph{dir_tag}"   # marine "12G18" style
     else:
         wind_str = f"Wind {wind:.0f} mph{dir_tag}"
     if tr is not None:
@@ -970,4 +995,78 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
     _draw_alert_strip(d, alerts, frame, accent, y0=0,
                       marine_str=marine_str, wind_str=wind_str, age_minutes=age)
 
+    _show(img)
+
+
+# ---------------------------------------------------------------------------
+# Screens shown before there is any data
+# ---------------------------------------------------------------------------
+
+def _wrap_text(d, text: str, font, max_w: int, max_lines: int) -> list[str]:
+    """Greedy word-wrap to *max_w*; the last line is ellipsised if it overflows."""
+    lines: list[str] = []
+    words = text.split()
+    while words and len(lines) < max_lines:
+        line = words.pop(0)
+        while words and d.textlength(line + " " + words[0], font=font) <= max_w:
+            line += " " + words.pop(0)
+        lines.append(line)
+    if words:
+        lines[-1] = lines[-1] + " " + " ".join(words)
+    return [_fit_text(d, ln, font, max_w) for ln in lines]
+
+
+def render_error(error: str, frame: int) -> None:
+    """No data at all and the last fetch failed: show why."""
+    frame_rate = _cfg["frame_rate"]
+    img, d = make_image()
+    ep  = 0.45 + 0.55 * math.sin(frame * math.pi / (frame_rate * 0.7))
+    ec  = tuple(int(c * (0.35 + 0.65 * ep)) for c in _RED)
+    ec2 = tuple(c // 2 for c in ec)
+    for sz, col in ((30 * _SS, ec2), (16 * _SS, ec)):
+        d.polygon([(0, 0), (sz, 0), (0, sz)], fill=col)
+        d.polygon([(_W - 1, 0), (_W - 1 - sz, 0), (_W - 1, sz)], fill=col)
+    draw_centered(d, 70 * _SS, "NO DATA", ec, font_unit)
+    y = 130 * _SS
+    for line in _wrap_text(d, error, font_label, _W - 24 * _SS, 4):
+        draw_centered(d, y, line, (160, 160, 160), font_label)
+        y += 20 * _SS
+    draw_centered(d, _H - 30 * _SS, "Retrying every few minutes",
+                  (90, 90, 90), font_label)
+    _show(img)
+
+
+def render_connecting(frame: int) -> None:
+    """Startup spinner until the first reading arrives."""
+    frame_rate = _cfg["frame_rate"]
+    cx_s   = _GAUGE_CX
+    dots   = "." * ((frame // frame_rate) % 4)
+    bright = int(72 + 42 * math.sin(frame * math.pi / (frame_rate * 2)))
+    dim2   = int(bright * 0.62)
+    dim3   = int(bright * 0.84)
+    img, d = make_image()
+    spin = (frame * 14) % 360
+    box  = (cx_s - 30 * _SS, 110 * _SS, cx_s + 30 * _SS, 170 * _SS)
+    d.arc(box, spin, spin + 115, fill=(bright,) * 3, width=3 * _SS)
+    d.arc(box, spin + 115, spin + 230, fill=(bright // 4,) * 3, width=2 * _SS)
+    spin2 = (360 - frame * 9) % 360
+    d.arc((cx_s - 18 * _SS, 122 * _SS, cx_s + 18 * _SS, 158 * _SS),
+          spin2, spin2 + 80, fill=(bright // 3,) * 3, width=2 * _SS)
+    draw_centered(d, 182 * _SS, "PONTOON WIND",
+                  (int(bright * 0.60), bright, int(bright * 0.72)), font_title)
+    sub_c = (int(dim2 * 0.55), int(dim2 * 0.75), dim2)
+    max_w = _W - 16 * _SS
+    draw_centered(d, 202 * _SS, _fit_text(d, _cfg["location_name"], font_label, max_w), sub_c, font_label)
+    draw_centered(d, 220 * _SS, f"NDBC {_cfg['ndbc_station']}", sub_c, font_label)
+    # Left-align from a fixed x so the text doesn't jiggle as dots are added.
+    base = "Connecting"
+    x = int((_W - d.textlength(base + "...", font=font_data)) / 2)
+    d.text((x, 244 * _SS), base + dots, fill=(dim3 // 2,) * 3, font=font_data)
+    _show(img)
+
+
+def render_offline() -> None:
+    """Last frame left on the panel when the service stops."""
+    img, d = make_image()
+    draw_centered(d, _H // 2 - 20 * _SS, "Offline", (80, 80, 80), font_unit)
     _show(img)

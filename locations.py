@@ -1,15 +1,7 @@
 """
-Location definitions and NOAA CO-OPS water-temperature helper.
+NOAA CO-OPS water-temperature lookup, used when the buoy has no WTMP reading.
 
-Each entry in LOCATIONS describes one named spot:
-  ndbc_station  – NDBC buoy or nearshore station ID (primary data source)
-  coops_station – NOAA CO-OPS tide-gauge station ID (water-temp fallback)
-  lat / lon     – decimal degrees (used for Weather.gov alerts endpoint)
-  name          – human-readable display label
-
-CO-OPS water temperature is fetched from the public Tides & Currents API
-(no API key required) and cached in memory for COOPS_CACHE_TTL seconds.
-
+Results are cached in memory for COOPS_CACHE_TTL seconds. No API key needed.
 API docs: https://api.tidesandcurrents.noaa.gov/api/prod/
 """
 
@@ -17,54 +9,63 @@ from urllib.request import urlopen, Request
 import json
 import logging
 import time
+from datetime import datetime, timezone
 
-COOPS_CACHE_TTL = 1800  # seconds (30 min) — CO-OPS readings update hourly
+COOPS_CACHE_TTL = 1800  # seconds; water temp changes slowly, no need to hit the API every poll
+COOPS_MAX_AGE   = 3 * 3600  # ignore a "latest" reading older than this (sensor down)
 
-LOCATIONS = {
-    "wrightsville_beach": {
-        "name":          "Wrightsville Beach / ICW",
-        "ndbc_station":  "41038",
-        "coops_station": "8658120",   # Wilmington, NC
-        "lat":           34.2108,
-        "lon":          -77.5986,
-    },
-}
+_COOPS_CACHE: dict[str, tuple[float, float | None]] = {}  # station → (monotonic time, temp_f)
 
-# Active location — change this to switch spots without touching pontoon_meter.py
-ACTIVE_LOCATION = LOCATIONS["wrightsville_beach"]
 
-_COOPS_CACHE: dict[str, tuple[float, float | None]] = {}  # station → (timestamp, temp_f)
+def parse_coops_water_temp(data: dict, now: datetime | None = None) -> float | None:
+    """Pull the newest reading out of a CO-OPS ``time_zone=gmt`` response.
+
+    Returns None when there's no reading, the value is blank, or it's older
+    than COOPS_MAX_AGE. ``date=latest`` returns the last value the station
+    ever posted, which can be days old if the sensor is down.
+    """
+    readings = data.get("data") or []
+    if not readings:
+        return None
+    last = readings[-1]
+    try:
+        temp_f = float(last["v"])
+        obs = datetime.strptime(last["t"], "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        return None
+    now = now or datetime.now(timezone.utc)
+    if (now - obs).total_seconds() > COOPS_MAX_AGE:
+        logging.info("CO-OPS reading from %s UTC is too old — ignored", last["t"])
+        return None
+    return temp_f
 
 
 def fetch_coops_water_temp(station: str) -> float | None:
     """
     Return the latest water temperature in °F from a NOAA CO-OPS station,
-    or None if the reading is unavailable.
+    or None if there's no recent reading.
 
-    Results are cached for COOPS_CACHE_TTL seconds so repeated calls within
-    the same polling window do not hit the network.
+    Results (including failures) are cached for COOPS_CACHE_TTL seconds so
+    the 5-minute poll doesn't hit the API every time.
     """
-    cached_at, cached_val = _COOPS_CACHE.get(station, (0.0, None))
-    if time.monotonic() - cached_at < COOPS_CACHE_TTL:
-        return cached_val
+    hit = _COOPS_CACHE.get(station)
+    if hit is not None and time.monotonic() - hit[0] < COOPS_CACHE_TTL:
+        return hit[1]
 
     url = (
         "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
         f"?station={station}&product=water_temperature"
-        "&date=latest&units=english&time_zone=lst&format=json"
+        "&date=latest&units=english&time_zone=gmt&format=json"
     )
+    temp_f = None
     try:
         req = Request(url, headers={"User-Agent": "pontoon-wind-meter/1.0"})
         with urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
-        readings = data.get("data") or []
-        if readings:
-            temp_f = float(readings[-1]["v"])
-            _COOPS_CACHE[station] = (time.monotonic(), temp_f)
+            temp_f = parse_coops_water_temp(json.loads(resp.read()))
+        if temp_f is not None:
             logging.info("CO-OPS station %s water temp: %.1f°F", station, temp_f)
-            return temp_f
     except Exception as exc:
         logging.warning("CO-OPS fetch failed for station %s: %s", station, exc)
 
-    _COOPS_CACHE[station] = (time.monotonic(), None)
-    return None
+    _COOPS_CACHE[station] = (time.monotonic(), temp_f)
+    return temp_f

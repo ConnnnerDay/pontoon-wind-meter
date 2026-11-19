@@ -1,242 +1,208 @@
 # Pontoon Wind Meter
 
-A Raspberry Pi Zero 2 W marine conditions display that pulls live NOAA data and shows whether conditions are suitable for taking a pontoon boat out on the Intracoastal Waterway near Wilmington, North Carolina.
+A Raspberry Pi Zero 2 W with a 2.4" TFT that answers one question: is it a
+good day to take the pontoon out on the ICW at Wrightsville Beach? It pulls
+NOAA buoy data and weather alerts and shows GO, CAUTION, or NO-GO on a gauge.
 
-A 2.4" SPI TFT display shows a color-zoned speedometer gauge, current wind and gust speeds, water temperature, wave height, wind direction compass, gust trend arrow, and a scrolling strip for active NOAA weather alerts — all updated live every 5 minutes.
+It's a quick glance, not a forecast. Check the marine forecast before you go.
 
----
+## What's on the screen
 
-## Features
+- **Gauge.** The needle shows the overall score (see below), not the raw gust,
+  so a calm day with big swell or fog can still put it in the yellow. A small
+  diamond marks the sustained wind, and a tick on the rim marks the highest
+  gust in the recent history.
+- **Status band.** GO / CAUTION / NO-GO. Four dots on the right show each
+  factor separately, right to left: wind, waves, water temp, weather (fog,
+  falling pressure, cold air, heat index). Grey means no data. A **CACHED**
+  label appears on the left when the network is down and it's showing the last
+  saved reading.
+- **Info row.** Water temp, any weather warnings (`~Fog`, `↓P`, `Chilly 55°`,
+  `HI 108°!`), and wave height/period.
+- **Big number.** Current gust in mph, with a trend arrow on the left: up,
+  down, or flat, comparing the newest observation to three observations back.
+- **Top strip.** Rotates between a wind summary, a marine summary (water, air,
+  waves, pressure), and the clock with the observation age. When NOAA has
+  active alerts for the location, the strip shows those instead.
+- **Stale data.** If the newest observation is older than `stale_minutes`
+  (90 by default), the gauge goes grey and says STALE.
 
-**Wind & conditions**
-* Live NDBC buoy data — Station 41038 (Wrightsville Beach Nearshore, NC), polled every 5 minutes
-* Wind speed and gust speed (m/s → mph), wind direction compass label (N/NE/E/…)
-* Water temperature sourced from NDBC buoy; falls back automatically to NOAA CO-OPS Station 8658120 (Wilmington, NC) when the buoy reading is unavailable
-* Wave height (m → ft) and dominant wave period for chop vs. swell detection
-* Observation age indicator — turns yellow when the reading is older than 90 minutes
+The same frame is served at `http://<pi>:8080/`, with `/frame` for a PNG and
+`/data` for the current state as JSON.
 
-**Display**
-* Animated speedometer gauge with green / yellow / red arc zones matching GO / CAUTION / NO-GO thresholds
-* Smooth spring-damper needle animation
-* Wind streak animation along the inner gauge face — speed proportional to gust
-* Gust trend indicator (↑ amber / ↓ blue / — grey) based on the 15-minute delta
-* Compact compass rose showing current wind direction
-* Pulsing status badge (GO / CAUTION / NO-GO)
-* Web dashboard on port 8080 (`/frame` for PNG snapshot, `/data` for JSON state)
+## How the verdict works
 
-**Weather alerts**
-* Active NOAA weather alerts fetched every 10 minutes from the Weather.gov API (no API key required)
-* Alert names shown in the top strip with a pulsing dot colored by severity
-* Cycles through multiple simultaneous alerts with a page indicator
+Every factor is mapped onto the wind scale, and the worst one wins:
 
-**Offline / cache**
-* Every successful NOAA fetch is saved atomically to a JSON file on disk
-* When the network is unavailable the last cached snapshot is loaded automatically — the display keeps showing the last known conditions with a small amber **CACHED** badge in the status band
-* Cached data older than 3 hours (configurable) is considered too stale to use and is ignored
+| Factor | Effect with default settings |
+|---|---|
+| Gust | Under 22 mph GO, 22–30 CAUTION, over 30 NO-GO |
+| Hot air (over 80°F) | Up to 5 mph taken off the gust, but never when the gust is already over 30 |
+| Waves | 3 ft is CAUTION, over 5 ft is NO-GO. Short-period chop (under 5 s) counts more, long swell (9 s+) counts less |
+| Water temp | Starts counting under 65°F; about 51°F and below is CAUTION. Cold water alone never makes it NO-GO |
+| Cold air | Feels-like (wind chill) under 50°F is CAUTION |
+| Heat index | 103°F+ is CAUTION, climbing to NO-GO at 125°F |
+| Fog | Air within 3°F of the dewpoint is CAUTION |
+| Falling pressure | A 1.5 hPa drop across the last few observations is CAUTION |
+| NOAA alerts | Severe or Extreme alerts force NO-GO. Advisories (Small Craft, etc.) are shown but don't change the verdict. Rip current, beach hazard, heat, and air quality alerts never change it |
 
-**Architecture**
-* Background data thread refreshes NDBC and NOAA alerts on independent timers; animation loop runs at 30 fps and never blocks on network I/O
-* Thread-safe state snapshot with `threading.Lock()`
-* Auto-retries failed fetches (up to 3 attempts with 5-second back-off)
-* Graceful shutdown — clears display on SIGTERM/SIGINT
+All of these thresholds live in `config.yaml`.
 
----
+## Data sources
+
+All public NOAA data, no API keys.
+
+| Data | Source | How often |
+|---|---|---|
+| Wind, gust, direction, waves, air/water temp, dewpoint, pressure | NDBC station 41038, `https://www.ndbc.noaa.gov/data/realtime2/41038.txt` | Polled every 5 min |
+| Water temp, when the buoy doesn't report it | NOAA CO-OPS station 8658120 (Wilmington), Tides & Currents API. Readings over 3 hours old are ignored | At most every 30 min |
+| Alerts | `https://api.weather.gov/alerts/active?status=actual&point=<lat>,<lon>` | Every 10 min |
+
+If the alert fetch keeps failing, alerts already on screen are dropped once
+their end time passes, so an old warning can't hold the meter at NO-GO
+through a long outage.
+
+The buoy usually reports less often than every 5 minutes. Repeat polls of the
+same observation are ignored for the trend arrow and pressure check, so those
+compare real observations rather than one reading against itself.
 
 ## Configuration
 
-All thresholds, location details, and polling intervals live in **`config.yaml`** next to the scripts.  Edit that file and restart the service — no code changes needed.
+Settings come from, highest priority first: command-line flags, `PONTOON_*`
+environment variables, `config.yaml`, then the defaults in `config.py`.
 
 ```yaml
 location:
-  ndbc_station: "41038"   # change to switch buoys
-  lat: 34.2108
-  lon: -77.5986
+  name:          "Wrightsville Beach / ICW"
+  ndbc_station:  "41038"
+  coops_station: "8658120"
+  lat:           34.2108   # used for the alerts lookup
+  lon:          -77.5986
 
 thresholds:
-  good_mph:    22   # below this → GO (green)
-  caution_mph: 30   # 22–30 mph  → CAUTION (yellow); above → NO-GO (red)
+  good_mph:    22   # below this is GO
+  caution_mph: 30   # up to this is CAUTION, above is NO-GO
+  gauge_max:   40   # top of the gauge; must be above caution_mph
 ```
 
-### Environment variable overrides
+To move to a different spot, change the `location` section. Find buoy IDs at
+[ndbc.noaa.gov](https://www.ndbc.noaa.gov) and CO-OPS stations at
+[tidesandcurrents.noaa.gov](https://tidesandcurrents.noaa.gov).
 
-Every threshold can also be set via a `PONTOON_` env var — useful for quick experiments or remote management without touching the file:
+Environment variables use the setting name in caps:
 
 ```bash
-PONTOON_GOOD_MPH=12 PONTOON_CAUTION_MPH=20 python pontoon_meter.py
+PONTOON_GOOD_MPH=18 PONTOON_CAUTION_MPH=25 python pontoon_meter.py
 ```
 
-### Command-line overrides
+Or flags:
 
 ```bash
-python pontoon_meter.py --good-mph 12 --caution-mph 20 --config myconfig.yaml
+python pontoon_meter.py --good-mph 18 --caution-mph 25 --config myconfig.yaml
 ```
 
-Run `python pontoon_meter.py --help` for the full list.
+`python pontoon_meter.py --help` lists every flag.
 
-### Cache configuration
+### Offline cache
 
-```yaml
-cache:
-  enabled:         true
-  path:            "/home/pizero/.cache/pontoon-meter/latest_snapshot.json"
-  max_age_minutes: 180   # ignore snapshots older than this
-```
+Each good buoy reading is written to
+`/home/pizero/.cache/pontoon-meter/latest_snapshot.json`. If a fetch fails,
+the display loads that file and shows CACHED. The observation age keeps
+counting while it does, so it will still go STALE. Snapshots older than
+`cache.max_age_minutes` (180) are ignored. If there's no usable data at all,
+the screen shows NO DATA with the error.
 
-Environment variable overrides: `PONTOON_CACHE_ENABLED`, `PONTOON_CACHE_PATH`, `PONTOON_CACHE_MAX_AGE_MINUTES`.
-
-Disable the cache entirely for a single run: `python pontoon_meter.py --no-cache`
-
----
-
-## Go / No-Go Logic
-
-| Status   | Gust speed   | Arc color |
-|----------|--------------|-----------|
-| GO       | Under 22 mph | Green     |
-| CAUTION  | 22 – 30 mph  | Yellow    |
-| NO-GO    | Over 30 mph  | Red       |
-
-Wind is the primary factor. The composite score also factors in wave height, water temperature, barometric pressure trend, fog risk, heat index, and wind chill. Adjust thresholds in `config.yaml`.
-
----
-
-## Data Sources
-
-All data comes from public NOAA APIs — **no API key is required**.
-
-| Source | URL | Refresh |
-|--------|-----|---------|
-| NDBC buoy 41038 (wind, waves, water temp) | `https://www.ndbc.noaa.gov/data/realtime2/41038.txt` | Every 5 min |
-| NOAA CO-OPS station 8658120 (water temp fallback) | `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?station=8658120&product=water_temperature&date=latest&units=english&time_zone=lst&format=json` | Cached 30 min |
-| Weather.gov alerts | `https://api.weather.gov/alerts/active?point=34.2108,-77.5986` | Every 10 min |
-
-To change the location, edit `ACTIVE_LOCATION` in `locations.py`. Look up CO-OPS station IDs at [tidesandcurrents.noaa.gov](https://tidesandcurrents.noaa.gov) and NDBC station IDs at [ndbc.noaa.gov](https://www.ndbc.noaa.gov).
-
----
-
-## Species Reference
-
-`data/species.json` lists common sport fish for the Wrightsville Beach / Wilmington area with habitat type (`surf`, `pier`, `inshore`, `nearshore`, `offshore`), size range, typical rigs, best baits, season, and a note on which wind/sea conditions suit each species. The file is standalone — the display app does not load it at runtime.
-
----
+`--no-cache` turns this off for one run. The env vars are
+`PONTOON_CACHE_ENABLED`, `PONTOON_CACHE_PATH`, and `PONTOON_CACHE_MAX_AGE_MINUTES`.
 
 ## Hardware
 
-* Raspberry Pi Zero 2 W
-* 2.4" SPI TFT display (ILI9341 controller, 320×240)
-* MicroSD card
-* 5V USB power supply
-
----
+- Raspberry Pi Zero 2 W
+- 2.4" SPI TFT, ILI9341 controller, 320×240 (DC on GPIO 24, RST on GPIO 25)
+- MicroSD card and a 5 V USB supply
 
 ## Setup
 
-### Raspberry Pi OS
-
-Raspberry Pi OS Lite (64-bit) is recommended. The project runs headless over SSH.
-
-### Enable SPI
+Start with Raspberry Pi OS Lite (64-bit) and enable SPI:
 
 ```bash
-sudo raspi-config
-# Interface Options → SPI → Enable
-# Reboot afterward
+sudo raspi-config   # Interface Options → SPI → Enable, then reboot
 ```
 
-### Install System Dependencies
+Install system packages:
 
 ```bash
 sudo apt update
-sudo apt install -y python3-pip python3-pil python3-numpy python3-rpi.gpio python3-spidev python3-lgpio
 ```
 
-### Create Virtual Environment
+```bash
+sudo apt install -y python3-pip python3-venv python3-pil python3-numpy python3-rpi.gpio python3-spidev python3-lgpio rsync
+```
+
+Create the virtualenv the service expects:
 
 ```bash
 python3 -m venv --system-site-packages ~/tftenv
-source ~/tftenv/bin/activate
-pip install luma.core luma.lcd "Pillow>=8.2"
 ```
 
-### Deploy the Scripts (manual)
-
-```bash
-cp -r . /home/pizero/pontoon-wind-meter/
-```
-
-### Deploy with the install script (recommended)
-
-The `scripts/install_service.sh` script handles everything in one step:
+Then from the repo, install and start the service:
 
 ```bash
 sudo bash scripts/install_service.sh
 ```
 
-It will:
-1. Stop the existing service (if running)
-2. Copy all project files to `/home/pizero/pontoon-wind-meter`
-3. Install/update Python packages into `/home/pizero/tftenv`
-4. Install the systemd unit and reload the daemon
-5. Enable and restart the service
-6. Print the final service status
+The script copies the project to `/home/pizero/pontoon-wind-meter`, installs
+`requirements.txt` into `~/tftenv`, installs and enables the systemd unit,
+creates the cache directory, and restarts the service. It assumes the user is
+`pizero`; set `SERVICE_USER=<name>` to change that, and edit
+`systemd/pontoon-meter.service` to match.
 
----
-
-## Running Manually
+To run it by hand instead:
 
 ```bash
-/home/pizero/tftenv/bin/python /home/pizero/pontoon-wind-meter/pontoon_meter.py
-```
-
----
-
-## systemd Service
-
-```bash
-sudo cp systemd/pontoon-meter.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable pontoon-meter.service
-sudo systemctl start pontoon-meter.service
+~/tftenv/bin/pip install -r requirements.txt
 ```
 
 ```bash
-systemctl status pontoon-meter.service
-sudo systemctl restart pontoon-meter.service
-journalctl -u pontoon-meter.service -f
+~/tftenv/bin/python pontoon_meter.py
 ```
 
----
+## Running the service
 
-## Running Tests
+```bash
+systemctl status pontoon-meter
+```
 
-Tests cover NDBC parsing, unit conversion, configuration loading, Go/No-Go scoring, and the disk cache.  They run on any machine — no Pi or display hardware required.
+```bash
+journalctl -u pontoon-meter -f
+```
+
+```bash
+sudo systemctl restart pontoon-meter
+```
+
+Restart after editing `config.yaml`. If the cache file gets corrupted, delete
+it and restart:
+
+```bash
+rm ~/.cache/pontoon-meter/latest_snapshot.json
+```
+
+## Tests
+
+The tests cover NDBC, CO-OPS, and alert parsing, the scoring logic, config
+loading, and the cache. They don't need a Pi or a display.
 
 ```bash
 pip install -r requirements-dev.txt
+```
+
+```bash
 pytest -q
 ```
 
----
+## Species reference
 
-## Troubleshooting
-
-```bash
-# Check service status
-systemctl status pontoon-meter.service
-
-# Follow live logs
-journalctl -u pontoon-meter.service -f
-
-# View the last cached snapshot
-cat /home/pizero/.cache/pontoon-meter/latest_snapshot.json
-
-# Remove the cache if it is corrupt or you want a clean start
-rm /home/pizero/.cache/pontoon-meter/latest_snapshot.json
-
-# Restart the service after editing config.yaml
-sudo systemctl restart pontoon-meter.service
-```
-
----
-
-The goal is not to replace official marine forecasts, but to provide a quick visual go / no-go indicator for local recreational boating conditions.
+`data/species.json` is a list of local sport fish with habitat, rigs, baits,
+and season. The app doesn't use it. Note that several of them live outside
+the inlet, which is not pontoon water no matter what the meter says.

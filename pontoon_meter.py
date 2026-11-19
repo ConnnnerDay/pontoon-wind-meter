@@ -1,15 +1,13 @@
 from luma.core.interface.serial import spi
 from luma.lcd.device import ili9341
-import io
 import json
 import logging
-import math
 import signal
 import sys
-import textwrap
 import threading
 import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlsplit
 
 from config import build_arg_parser, load_config
 import logic
@@ -26,12 +24,9 @@ cfg   = load_config(_args)
 URL        = f"https://www.ndbc.noaa.gov/data/realtime2/{cfg['ndbc_station']}.txt"
 ALERTS_URL = f"https://api.weather.gov/alerts/active?point={cfg['lat']},{cfg['lon']}"
 
-# Convenience aliases used by the web handler
-GOOD_MPH    = cfg["good_mph"]
-CAUTION_MPH = cfg["caution_mph"]
 STALE_MINUTES = cfg["stale_minutes"]
-FRAME_RATE  = cfg["frame_rate"]
-WEB_PORT    = cfg["web_port"]
+FRAME_RATE    = cfg["frame_rate"]
+WEB_PORT      = cfg["web_port"]
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -49,7 +44,7 @@ _state = {
     "age": None, "wtmp": None, "wvht": None, "atmp": None, "dpd": None,
     "dewp": None,
     "pres": None, "pres_history": [],
-    "gust_history": [],
+    "gust_history": [], "obs_time": None,
     "alerts": [], "error": None,
     "cached": False,   # True when the display is showing disk-cached data
 }
@@ -91,7 +86,8 @@ _WEB_PAGE = (
 
 class _WebHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path.startswith("/frame"):
+        path = urlsplit(self.path).path
+        if path == "/frame":
             data = renderer.get_latest_frame()
             if not data:
                 self.send_response(503)
@@ -104,7 +100,7 @@ class _WebHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
             self.end_headers()
             self.wfile.write(data)
-        elif self.path == "/data":
+        elif path == "/data":
             with _lock:
                 s = dict(_state)
                 s["alerts"]       = list(_state["alerts"])
@@ -117,29 +113,38 @@ class _WebHandler(BaseHTTPRequestHandler):
                 s["status"] = "OFFLINE"
             s["stale"]  = s.get("age") is not None and s["age"] >= STALE_MINUTES
             s["trend"]  = logic.trend(s["gust_history"])
-            s["alerts"] = [[a, b] for a, b in s["alerts"]]
+            s["alerts"] = [[a[0], a[1]] for a in s["alerts"]]
             body = json.dumps(s).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
-        else:
+        elif path in ("/", "/index.html"):
             body = _WEB_PAGE.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        else:
+            self.send_error(404)
 
     def log_message(self, *_args):
         pass
 
 
 def _start_web_server():
-    class _Server(HTTPServer):
+    # Threaded so one slow phone on bad Wi-Fi can't stall every other client.
+    class _Server(ThreadingHTTPServer):
         allow_reuse_address = True
-    server = _Server(("", WEB_PORT), _WebHandler)
+        daemon_threads = True
+    try:
+        server = _Server(("", WEB_PORT), _WebHandler)
+    except OSError as exc:
+        # Don't take the whole display down because the port is busy.
+        logging.error("Web dashboard disabled: cannot bind port %d: %s", WEB_PORT, exc)
+        return
     threading.Thread(target=server.serve_forever, daemon=True).start()
     logging.info("Web dashboard on http://0.0.0.0:%d/", WEB_PORT)
 
@@ -151,9 +156,10 @@ def _start_web_server():
 def handle_exit(sig, _frame):
     logging.info("Shutting down (signal %d)", sig)
     try:
-        img, d = renderer.make_image()
-        renderer.draw_centered(d, 125 * renderer._SS, "Offline", (80, 80, 80), renderer.font_big)
-        renderer._show(img)
+        # luma clears the panel in its atexit hook unless persist is set,
+        # which would wipe the "Offline" frame straight away.
+        device.persist = True
+        renderer.render_offline()
     except Exception:
         pass
     sys.exit(0)
@@ -224,58 +230,13 @@ def main():
 
         elif snap["error"] is not None:
             try:
-                img, d = renderer.make_image()
-                _SS = renderer._SS
-                _RED = renderer._RED
-                ep  = 0.45 + 0.55 * math.sin(frame * math.pi / (FRAME_RATE * 0.7))
-                ec  = tuple(int(c * (0.35 + 0.65 * ep)) for c in _RED)
-                ec2 = tuple(c // 2 for c in ec)
-                for sz, col in ((30 * _SS, ec2), (16 * _SS, ec)):
-                    d.polygon([(0, 0), (sz, 0), (0, sz)], fill=col)
-                    d.polygon([(renderer._W - 1, 0),
-                               (renderer._W - 1 - sz, 0),
-                               (renderer._W - 1, sz)], fill=col)
-                renderer.draw_centered(d, 78 * _SS, "ERROR", ec, renderer.font_big)
-                err_text = textwrap.shorten(snap["error"], width=34, placeholder="…")
-                d.text((12 * _SS, 150 * _SS), err_text,
-                       fill=(160, 160, 160), font=renderer.font_data)
-                renderer._show(img)
+                renderer.render_error(snap["error"], frame)
             except Exception:
                 logging.exception("Error screen render failed")
 
         else:
             try:
-                _SS  = renderer._SS
-                _W   = renderer._W
-                _H   = renderer._H
-                cx_s = renderer._GAUGE_CX
-                dots   = "." * ((frame // FRAME_RATE) % 4)
-                bright = int(72 + 42 * math.sin(frame * math.pi / (FRAME_RATE * 2)))
-                dim2   = int(bright * 0.62)
-                dim3   = int(bright * 0.84)
-                img, d = renderer.make_image()
-                spin  = (frame * 14) % 360
-                bc    = (bright, bright, bright)
-                d.arc((cx_s - 30 * _SS, 110 * _SS, cx_s + 30 * _SS, 170 * _SS),
-                      spin, spin + 115, fill=bc, width=3 * _SS)
-                d.arc((cx_s - 30 * _SS, 110 * _SS, cx_s + 30 * _SS, 170 * _SS),
-                      spin + 115, spin + 230,
-                      fill=(bright // 4, bright // 4, bright // 4), width=2 * _SS)
-                spin2 = (360 - frame * 9) % 360
-                d.arc((cx_s - 18 * _SS, 122 * _SS, cx_s + 18 * _SS, 158 * _SS),
-                      spin2, spin2 + 80,
-                      fill=(bright // 3, bright // 3, bright // 3), width=2 * _SS)
-                renderer.draw_centered(
-                    d, 182 * _SS, "PONTOON WIND",
-                    (int(bright * 0.60), bright, int(bright * 0.72)), renderer.font_title)
-                renderer.draw_centered(
-                    d, 198 * _SS,
-                    f"NDBC {cfg['ndbc_station']} · {cfg['location_name']}",
-                    (int(dim2 * 0.55), int(dim2 * 0.75), dim2), renderer.font_label)
-                renderer.draw_centered(
-                    d, 216 * _SS, f"Connecting{dots}",
-                    (dim3 // 2, dim3 // 2, dim3 // 2), renderer.font_data)
-                renderer._show(img)
+                renderer.render_connecting(frame)
             except Exception:
                 logging.exception("Connecting screen render failed")
 
