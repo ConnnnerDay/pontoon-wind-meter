@@ -148,12 +148,12 @@ def alert_floor(alerts: list, cfg: dict) -> float:
     below, e.g. a Small Craft Advisory or the perpetual coastal rip-current /
     beach statements — are shown on the dashboard but do NOT force CAUTION,
     since the actual wind, wave, and weather readings already drive the verdict
-    when conditions warrant it.  Each ``alerts`` entry is an
-    ``(event, severity)`` pair.
+    when conditions warrant it.  Each ``alerts`` entry starts with
+    ``(event, severity)``; anything after that is ignored.
     """
     caution_mph = cfg["caution_mph"]
     floor = 0.0
-    for event, severity in alerts:
+    for event, severity, *_ in alerts:
         if (event or "").upper() in _NON_BOATING_EVENTS:
             continue
         rank = _SEVERITY_RANK.get((severity or "unknown").strip().lower(), 0)

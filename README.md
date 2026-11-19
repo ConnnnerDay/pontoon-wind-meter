@@ -55,8 +55,12 @@ All public NOAA data, no API keys.
 | Data | Source | How often |
 |---|---|---|
 | Wind, gust, direction, waves, air/water temp, dewpoint, pressure | NDBC station 41038, `https://www.ndbc.noaa.gov/data/realtime2/41038.txt` | Polled every 5 min |
-| Water temp, when the buoy doesn't report it | NOAA CO-OPS station 8658120 (Wilmington), Tides & Currents API | At most every 30 min |
-| Alerts | `https://api.weather.gov/alerts/active?point=<lat>,<lon>` | Every 10 min |
+| Water temp, when the buoy doesn't report it | NOAA CO-OPS station 8658120 (Wilmington), Tides & Currents API. Readings over 3 hours old are ignored | At most every 30 min |
+| Alerts | `https://api.weather.gov/alerts/active?status=actual&point=<lat>,<lon>` | Every 10 min |
+
+If the alert fetch keeps failing, alerts already on screen are dropped once
+their end time passes, so an old warning can't hold the meter at NO-GO
+through a long outage.
 
 The buoy usually reports less often than every 5 minutes. Repeat polls of the
 same observation are ignored for the trend arrow and pressure check, so those
@@ -106,7 +110,7 @@ Each good buoy reading is written to
 the display loads that file and shows CACHED. The observation age keeps
 counting while it does, so it will still go STALE. Snapshots older than
 `cache.max_age_minutes` (180) are ignored. If there's no usable data at all,
-the screen shows the error instead.
+the screen shows NO DATA with the error.
 
 `--no-cache` turns this off for one run. The env vars are
 `PONTOON_CACHE_ENABLED`, `PONTOON_CACHE_PATH`, and `PONTOON_CACHE_MAX_AGE_MINUTES`.
@@ -186,8 +190,8 @@ rm ~/.cache/pontoon-meter/latest_snapshot.json
 
 ## Tests
 
-The tests cover NDBC parsing, the scoring logic, config loading, and the
-cache. They don't need a Pi or a display.
+The tests cover NDBC, CO-OPS, and alert parsing, the scoring logic, config
+loading, and the cache. They don't need a Pi or a display.
 
 ```bash
 pip install -r requirements-dev.txt

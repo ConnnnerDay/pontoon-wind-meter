@@ -1,5 +1,6 @@
 """Tests for data/fetcher.py — run with: pytest test_fetcher.py"""
 import json
+from datetime import datetime, timezone
 import threading
 import time
 
@@ -84,3 +85,33 @@ def test_update_histories_caps_length_and_skips_missing_pressure():
         update_histories(state, float(i), None, f"2026-06-01 12:{i:02d}")
     assert state["gust_history"] == [9.0, 8.0, 7.0, 6.0, 5.0, 4.0]
     assert state["pres_history"] == []
+
+
+def test_parse_alerts_keeps_highest_severity_and_end_time():
+    from data.fetcher import parse_alerts
+    data = {"features": [
+        {"properties": {"event": "Gale Warning", "severity": "Moderate",
+                        "expires": "2026-07-01T12:00:00-04:00", "ends": "2026-07-01T18:00:00-04:00"}},
+        {"properties": {"event": "Gale Warning", "severity": "Severe",
+                        "expires": "2026-07-01T14:00:00-04:00", "ends": None}},
+        {"properties": {"event": "Rip Current Statement", "severity": "Minor"}},
+        {"properties": {"event": ""}},
+    ]}
+    alerts = {a[0]: a for a in parse_alerts(data)}
+    assert set(alerts) == {"GALE WARNING", "RIP CURRENT STATEMENT"}
+    event, sev, until = alerts["GALE WARNING"]
+    assert sev == "Severe"
+    assert until == datetime(2026, 7, 1, 22, 0, tzinfo=timezone.utc).timestamp()
+    assert alerts["RIP CURRENT STATEMENT"][2] is None
+
+
+def test_drop_expired_alerts():
+    from data.fetcher import drop_expired_alerts
+    now = 1_000_000.0
+    alerts = [("A", "Severe", now - 1), ("B", "Severe", now + 60), ("C", "Minor", None)]
+    assert [a[0] for a in drop_expired_alerts(alerts, now)] == ["B", "C"]
+
+
+def test_alert_floor_accepts_triples():
+    from logic import alert_floor
+    assert alert_floor([("GALE WARNING", "Severe", None)], {"caution_mph": 30.0}) == 30.5

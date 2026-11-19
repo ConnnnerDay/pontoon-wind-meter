@@ -20,6 +20,7 @@ import json
 import logging
 import time
 import threading
+from datetime import datetime
 from urllib.request import urlopen, Request
 
 from ndbc import ms_to_mph, celsius_to_f, m_to_ft, wind_direction, parse_ndbc, obs_age_minutes, obs_time
@@ -43,8 +44,50 @@ def fetch_ndbc_raw(url: str) -> str:
     raise last_exc  # type: ignore[misc]
 
 
-def fetch_alerts(url: str) -> list[tuple[str, str]]:
-    """Fetch active NOAA Weather.gov alerts, returning (event_name, severity) pairs."""
+_SEV_ORDER = {"extreme": 4, "severe": 3, "moderate": 2, "minor": 1, "unknown": 0}
+
+
+def _parse_iso(ts: str | None) -> float | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def parse_alerts(data: dict) -> list[tuple[str, str, float | None]]:
+    """Turn a weather.gov alerts response into ``(EVENT, severity, until)``.
+
+    One entry per event name, keeping the highest severity seen for it.
+    ``until`` is the later of the alert's ``ends`` and ``expires`` times (Unix
+    seconds), or None if neither is given.
+    """
+    best: dict[str, tuple[str, str, float | None]] = {}
+    for feat in data.get("features", []):
+        props = feat.get("properties") or {}
+        event = (props.get("event") or "").strip().upper()
+        if not event:
+            continue
+        sev   = props.get("severity") or "Unknown"
+        times = [t for t in (_parse_iso(props.get("ends")), _parse_iso(props.get("expires"))) if t]
+        until = max(times) if times else None
+        prev  = best.get(event)
+        if prev is None:
+            best[event] = (event, sev, until)
+            continue
+        if _SEV_ORDER.get(sev.lower(), 0) > _SEV_ORDER.get(prev[1].lower(), 0):
+            prev = (event, sev, prev[2])
+        if until is None or prev[2] is None:
+            prev = (event, prev[1], None)          # no end time → keep until refetched
+        else:
+            prev = (event, prev[1], max(until, prev[2]))
+        best[event] = prev
+    return list(best.values())
+
+
+def fetch_alerts(url: str) -> list[tuple[str, str, float | None]]:
+    """Fetch active alerts, retrying up to 3 times. See :func:`parse_alerts`."""
     req = Request(url, headers={
         "User-Agent": "pontoon-wind-meter/1.0",
         "Accept":     "application/geo+json",
@@ -53,23 +96,23 @@ def fetch_alerts(url: str) -> list[tuple[str, str]]:
     for attempt in range(3):
         try:
             with urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
-            seen: set[str] = set()
-            result: list[tuple[str, str]] = []
-            for feat in data.get("features", []):
-                props = feat.get("properties", {})
-                event = props.get("event", "")
-                sev   = props.get("severity", "Unknown")
-                if event and event not in seen:
-                    seen.add(event)
-                    result.append((event.upper(), sev))
-            return result
+                return parse_alerts(json.loads(resp.read().decode()))
         except Exception as exc:
             last_exc = exc
             if attempt < 2:
                 logging.warning("Alert fetch attempt %d failed: %s", attempt + 1, exc)
                 time.sleep(5)
     raise last_exc  # type: ignore[misc]
+
+
+def drop_expired_alerts(alerts: list, now: float) -> list:
+    """Remove alerts whose end time has passed.
+
+    Only matters when the alert fetch keeps failing: otherwise each refresh
+    replaces the list anyway. Without this, a warning fetched just before an
+    outage would hold the verdict at NO-GO for as long as the outage lasts.
+    """
+    return [a for a in alerts if a[2] is None or a[2] > now]
 
 
 HISTORY_LEN = 6
@@ -153,7 +196,7 @@ def data_loop(state: dict, lock: threading.Lock, cfg: dict) -> None:
         Configuration dict from :func:`config.load_config`.
     """
     ndbc_url       = f"https://www.ndbc.noaa.gov/data/realtime2/{cfg['ndbc_station']}.txt"
-    alerts_url     = f"https://api.weather.gov/alerts/active?point={cfg['lat']},{cfg['lon']}"
+    alerts_url     = f"https://api.weather.gov/alerts/active?status=actual&point={cfg['lat']},{cfg['lon']}"
     coops_station  = cfg["coops_station"]
     poll_interval  = cfg["poll_interval"]
     alerts_interval = cfg["alerts_interval"]
@@ -253,6 +296,12 @@ def data_loop(state: dict, lock: threading.Lock, cfg: dict) -> None:
             except Exception as exc:
                 logging.warning("Alert fetch failed: %s", exc)
             last_alert_fetch = time.monotonic()
+
+        with lock:
+            kept = drop_expired_alerts(state["alerts"], time.time())
+            if len(kept) != len(state["alerts"]):
+                logging.info("Dropped expired alerts; still active: %s", [a[0] for a in kept])
+                state["alerts"] = kept
 
         elapsed = time.monotonic() - t0
         time.sleep(max(0.0, poll_interval - elapsed))

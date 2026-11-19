@@ -532,7 +532,7 @@ def _draw_alert_strip(d, alerts, frame, status_color, y0, marine_str=None, wind_
         return
 
     idx       = (frame // (frame_rate * 4)) % len(alerts)
-    name, sev = alerts[idx]
+    name, sev = alerts[idx][:2]
     color     = _ALERT_COLORS.get(sev, _YELLOW)
 
     pulse     = 0.38 + 0.62 * abs(math.sin(frame * math.pi / (frame_rate * 0.7)))
@@ -938,7 +938,7 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
     d.text((grp_x + num_w + 10 * _SS,   num_y + 16 * _SS + 2 * _SS), "mph",   fill=(0, 0, 0),  font=font_unit, anchor="lm")
     d.text((grp_x + num_w +  8 * _SS,   num_y + 16 * _SS),            "mph",   fill=mph_fill,   font=font_unit, anchor="lm")
 
-    if tr is not None:
+    if tr is not None and not stale:
         _draw_trend(d, 18 * _SS, num_y - 12 * _SS, tr)
 
     dir_tag  = f" {wdir}" if wdir and wdir != "---" else ""
@@ -995,4 +995,78 @@ def render_display(state: dict, frame: int, needle_gust: float, composite: float
     _draw_alert_strip(d, alerts, frame, accent, y0=0,
                       marine_str=marine_str, wind_str=wind_str, age_minutes=age)
 
+    _show(img)
+
+
+# ---------------------------------------------------------------------------
+# Screens shown before there is any data
+# ---------------------------------------------------------------------------
+
+def _wrap_text(d, text: str, font, max_w: int, max_lines: int) -> list[str]:
+    """Greedy word-wrap to *max_w*; the last line is ellipsised if it overflows."""
+    lines: list[str] = []
+    words = text.split()
+    while words and len(lines) < max_lines:
+        line = words.pop(0)
+        while words and d.textlength(line + " " + words[0], font=font) <= max_w:
+            line += " " + words.pop(0)
+        lines.append(line)
+    if words:
+        lines[-1] = lines[-1] + " " + " ".join(words)
+    return [_fit_text(d, ln, font, max_w) for ln in lines]
+
+
+def render_error(error: str, frame: int) -> None:
+    """No data at all and the last fetch failed: show why."""
+    frame_rate = _cfg["frame_rate"]
+    img, d = make_image()
+    ep  = 0.45 + 0.55 * math.sin(frame * math.pi / (frame_rate * 0.7))
+    ec  = tuple(int(c * (0.35 + 0.65 * ep)) for c in _RED)
+    ec2 = tuple(c // 2 for c in ec)
+    for sz, col in ((30 * _SS, ec2), (16 * _SS, ec)):
+        d.polygon([(0, 0), (sz, 0), (0, sz)], fill=col)
+        d.polygon([(_W - 1, 0), (_W - 1 - sz, 0), (_W - 1, sz)], fill=col)
+    draw_centered(d, 70 * _SS, "NO DATA", ec, font_unit)
+    y = 130 * _SS
+    for line in _wrap_text(d, error, font_label, _W - 24 * _SS, 4):
+        draw_centered(d, y, line, (160, 160, 160), font_label)
+        y += 20 * _SS
+    draw_centered(d, _H - 30 * _SS, "Retrying every few minutes",
+                  (90, 90, 90), font_label)
+    _show(img)
+
+
+def render_connecting(frame: int) -> None:
+    """Startup spinner until the first reading arrives."""
+    frame_rate = _cfg["frame_rate"]
+    cx_s   = _GAUGE_CX
+    dots   = "." * ((frame // frame_rate) % 4)
+    bright = int(72 + 42 * math.sin(frame * math.pi / (frame_rate * 2)))
+    dim2   = int(bright * 0.62)
+    dim3   = int(bright * 0.84)
+    img, d = make_image()
+    spin = (frame * 14) % 360
+    box  = (cx_s - 30 * _SS, 110 * _SS, cx_s + 30 * _SS, 170 * _SS)
+    d.arc(box, spin, spin + 115, fill=(bright,) * 3, width=3 * _SS)
+    d.arc(box, spin + 115, spin + 230, fill=(bright // 4,) * 3, width=2 * _SS)
+    spin2 = (360 - frame * 9) % 360
+    d.arc((cx_s - 18 * _SS, 122 * _SS, cx_s + 18 * _SS, 158 * _SS),
+          spin2, spin2 + 80, fill=(bright // 3,) * 3, width=2 * _SS)
+    draw_centered(d, 182 * _SS, "PONTOON WIND",
+                  (int(bright * 0.60), bright, int(bright * 0.72)), font_title)
+    sub_c = (int(dim2 * 0.55), int(dim2 * 0.75), dim2)
+    max_w = _W - 16 * _SS
+    draw_centered(d, 202 * _SS, _fit_text(d, _cfg["location_name"], font_label, max_w), sub_c, font_label)
+    draw_centered(d, 220 * _SS, f"NDBC {_cfg['ndbc_station']}", sub_c, font_label)
+    # Left-align from a fixed x so the text doesn't jiggle as dots are added.
+    base = "Connecting"
+    x = int((_W - d.textlength(base + "...", font=font_data)) / 2)
+    d.text((x, 244 * _SS), base + dots, fill=(dim3 // 2,) * 3, font=font_data)
+    _show(img)
+
+
+def render_offline() -> None:
+    """Last frame left on the panel when the service stops."""
+    img, d = make_image()
+    draw_centered(d, _H // 2 - 20 * _SS, "Offline", (80, 80, 80), font_unit)
     _show(img)
