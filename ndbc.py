@@ -46,11 +46,27 @@ def parse_ndbc(txt: str) -> dict[str, str]:
     return dict(zip(cols, data_line.split()))
 
 
+def _year(yy: str) -> int:
+    """NDBC realtime2 files use a 4-digit year under the ``#YY`` header; some
+    older/historical files use 2 digits. Accept both."""
+    year = int(yy)
+    return year + 2000 if year < 100 else year
+
+
+def obs_time(row: dict[str, str]) -> str | None:
+    """Return the observation's UTC timestamp as ``'YYYY-MM-DD hh:mm'``, or None."""
+    try:
+        return (f"{_year(row['YY']):04d}-{int(row['MM']):02d}-{int(row['DD']):02d} "
+                f"{int(row['hh']):02d}:{int(row['mm']):02d}")
+    except (KeyError, ValueError):
+        return None
+
+
 def obs_age_minutes(row: dict[str, str]) -> int | None:
     """Return how many minutes ago the observation was recorded (UTC), or None."""
     try:
         obs = datetime(
-            2000 + int(row["YY"]),
+            _year(row["YY"]),
             int(row["MM"]),
             int(row["DD"]),
             int(row["hh"]),

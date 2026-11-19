@@ -4,7 +4,7 @@ import threading
 import time
 
 import disk_cache
-from data.fetcher import _apply_cache
+from data.fetcher import _apply_cache, update_histories
 
 
 def _backdate_saved_at(path: str, seconds_ago: float) -> None:
@@ -65,3 +65,22 @@ def test_apply_cache_rejects_stale_snapshot(tmp_path):
     state = _base_state()
     assert _apply_cache(state, threading.Lock(), cfg) is False
     assert state["cached"] is False
+
+
+def test_update_histories_skips_repeat_observation():
+    state = {"gust_history": [], "pres_history": [], "obs_time": None}
+    update_histories(state, 10.0, 1015.0, "2026-06-01 12:00")
+    update_histories(state, 10.0, 1015.0, "2026-06-01 12:00")  # same obs, polled again
+    assert state["gust_history"] == [10.0]
+    assert state["pres_history"] == [1015.0]
+    update_histories(state, 14.0, 1014.0, "2026-06-01 12:10")
+    assert state["gust_history"] == [14.0, 10.0]
+    assert state["pres_history"] == [1014.0, 1015.0]
+
+
+def test_update_histories_caps_length_and_skips_missing_pressure():
+    state = {"gust_history": [], "pres_history": [], "obs_time": None}
+    for i in range(10):
+        update_histories(state, float(i), None, f"2026-06-01 12:{i:02d}")
+    assert state["gust_history"] == [9.0, 8.0, 7.0, 6.0, 5.0, 4.0]
+    assert state["pres_history"] == []

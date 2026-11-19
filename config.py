@@ -5,7 +5,7 @@ Priority (highest → lowest):
   1. CLI arguments  (--good-mph 12, --config myconfig.yml, …)
   2. Environment variables  (PONTOON_GOOD_MPH=12, …)
   3. config.yaml / the file named by --config
-  4. Built-in defaults  (same values as the original constants)
+  4. Built-in defaults below
 
 Usage::
 
@@ -31,8 +31,8 @@ except ImportError:
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parent / "config.yaml"
 
-# Built-in defaults — these are the original hard-coded constants so the app
-# works identically without a config.yaml present.
+# Defaults used for anything config.yaml, env vars, and CLI don't set.
+# Keep these in sync with config.yaml.
 _DEFAULTS: dict[str, Any] = {
     # location
     "location_name":      "Wrightsville Beach / ICW",

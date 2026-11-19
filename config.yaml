@@ -1,10 +1,7 @@
-# Pontoon Wind Meter — configuration
+# Pontoon Wind Meter configuration
 #
-# Edit this file to change thresholds, location, or polling intervals.
-# The application loads it at startup; restart the service after editing.
-#
-# All values have built-in defaults matching the original constants, so any
-# section can be omitted and the default will be used.
+# Read once at startup, so restart the service after editing.
+# Anything left out falls back to the default in config.py.
 
 location:
   name:          "Wrightsville Beach / ICW"
@@ -22,27 +19,30 @@ thresholds:
   # Data freshness — readings older than this are shown as "STALE"
   stale_minutes: 90
 
-  # Wave thresholds (feet and seconds)
-  wave_good_ft:    2.0   # below this  → GO for waves
-  wave_caution_ft: 3.0   # above this  → NO-GO for waves
+  # Wave thresholds (feet and seconds). The good/caution heights set the wave
+  # status dot directly. In the overall verdict waves count at 0.75 weight, so
+  # with these defaults 3 ft reads CAUTION and it takes >5 ft for NO-GO
+  # (about 3.7 ft in short-period chop).
+  wave_good_ft:    2.0
+  wave_caution_ft: 3.0
   wave_chop_dpd:   5.0   # dominant period < this = short choppy swell (penalised)
   wave_swell_dpd:  9.0   # dominant period ≥ this = long gentle swell (forgiven)
 
   # Water temperature (°F)
-  temp_cool_f: 65    # below this starts adding a caution penalty
-  temp_cold_f: 50    # below this adds a significant cold-water penalty
+  temp_cool_f: 65    # water below this starts counting against you
+  temp_cold_f: 50    # water at/below this → CAUTION; also the cold-air (feels-like) CAUTION line
 
   # Air temperature comfort (°F) — open pontoon deck
-  atmp_warm_f:   80.0  # above this, warm-day wind relief applies (up to 5 mph equiv.)
-  atmp_chilly_f: 62.0  # below this, cold-air comfort penalty applies
+  atmp_warm_f:   80.0  # above this, up to 5 mph is taken off the gust (not above caution_mph)
+  atmp_chilly_f: 62.0  # below this, a small cold-air nudge; feels-like below temp_cold_f → CAUTION
 
-  # Fog risk — air-to-dewpoint spread below this suggests fog / mist on the water.
-  # Kept tight: a ~5°F spread is just a humid coastal day, not fog. Near-
-  # saturation (≤3°F) is a more honest mist/fog signal and avoids a perpetual
-  # CAUTION on muggy-but-calm days.
+  # Fog risk: air-to-dewpoint spread (°F) below this reads as fog. A 5°F spread
+  # is just a humid coastal day, so keep this tight or every muggy morning
+  # turns CAUTION.
   fog_spread_f: 3.0
 
-  # Falling pressure — hPa drop over the polling window that triggers a CAUTION floor
+  # Falling pressure: a drop of this many hPa across the last few buoy
+  # observations (up to 6) forces CAUTION
   pres_fall_caution: 1.5
 
 polling:
@@ -52,8 +52,8 @@ polling:
   web_port:         8080  # HTTP dashboard port
 
 cache:
-  # When enabled, every successful NOAA fetch is written to disk so the app
-  # can show the last known conditions during a network outage.
+  # Every good buoy reading is saved here so the display can keep showing the
+  # last known conditions through a network outage.
   enabled:          true
   path:             "/home/pizero/.cache/pontoon-meter/latest_snapshot.json"
   max_age_minutes:  180   # snapshots older than this are considered too stale to use

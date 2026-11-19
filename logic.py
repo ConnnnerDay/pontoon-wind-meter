@@ -17,10 +17,10 @@ import math
 
 def trend(history: list[float]) -> str | None:
     """Return ``'up'``, ``'down'``, or ``'steady'`` from a most-recent-first
-    gust list, or ``None`` when there is not enough history."""
+    list of gusts (one per buoy observation), or ``None`` with fewer than 4."""
     if len(history) < 4:
         return None
-    delta = history[0] - history[3]   # newest vs ~15 min ago
+    delta = history[0] - history[3]   # newest vs three observations back
     if delta >  1.5:
         return "up"
     if delta < -1.5:
@@ -169,10 +169,9 @@ def alert_floor(alerts: list, cfg: dict) -> float:
 def composite_score(state: dict, cfg: dict) -> float:
     """Weighted go/no-go score on the 0–gauge_max scale.
 
-    Wind gust is primary (full weight).  Wave height, water temperature,
-    barometric pressure trend, and fog each contribute with lighter weights.
-    A dangerous heat index or wind chill on the exposed deck, and any active
-    NOAA alert, force the result to at least the CAUTION boundary.
+    The score is the worst of several factors, each mapped onto the wind
+    scale: gust, waves, cold water, cold air (wind chill), heat index, fog,
+    and falling pressure. A Severe/Extreme boating alert floors it at NO-GO.
     """
     gust         = state.get("gust") or 0.0
     wind         = state.get("wind")
@@ -200,9 +199,10 @@ def composite_score(state: dict, cfg: dict) -> float:
 
     wind_eq = min(float(gust), float(gauge_max))
 
-    # Hot-day relief: warm air makes moderate wind feel refreshing.
-    # Max 5 mph equivalent so dangerous winds can't disappear.
-    if atmp is not None and atmp > atmp_warm_f:
+    # Hot-day relief: on a warm day a moderate breeze is welcome, so knock up
+    # to 5 mph off the gust. Never applied above the NO-GO line — heat doesn't
+    # make a 33 mph gust any safer.
+    if atmp is not None and atmp > atmp_warm_f and wind_eq <= caution_mph:
         warm_relief = min(5.0, (atmp - atmp_warm_f) / 20.0 * 5.0)
         wind_eq = max(0.0, wind_eq - warm_relief)
 
@@ -215,12 +215,9 @@ def composite_score(state: dict, cfg: dict) -> float:
         t = (wvht - wave_good_ft) / (wave_caution_ft - wave_good_ft)
         wave_eq = good_mph + t * (caution_mph - good_mph)
     else:
-        # Above the caution height, climb fast enough that the *weighted*
-        # contribution (wave_eq * 0.75 below) crosses the NO-GO line just past
-        # ~4.5 ft.  Do NOT clamp to gauge_max here — that pre-weight cap used to
-        # hold the weighted result at 22.5 (CAUTION) no matter how big the sea,
-        # so a 10 ft swell on calm wind never read NO-GO.  The final
-        # ``min(result, gauge_max)`` is the real ceiling.
+        # Above the caution height, keep climbing 5 mph-equivalent per foot
+        # with no cap here, so a big enough sea reaches NO-GO on its own even
+        # in calm wind. The final min(result, gauge_max) is the only ceiling.
         wave_eq = caution_mph + (wvht - wave_caution_ft) * 5.0
 
     # DPD modulates wave danger: choppy short-period seas are worse on a pontoon
@@ -237,17 +234,22 @@ def composite_score(state: dict, cfg: dict) -> float:
     if atmp is not None and wind is not None and atmp <= 50 and wind >= 3:
         feels_cold = min(atmp, wind_chill_f(atmp, wind))
 
-    # Temperature penalty (water + air, the latter via the feels-like value)
-    temp_eq = 0.0
+    # Cold water: ramps from 0 at temp_cool_f to caution_mph at temp_cold_f,
+    # weighted 0.8 below so cold water alone tops out at CAUTION.
+    water_eq = 0.0
     if wtmp is not None and wtmp < temp_cool_f:
         span = max(1, temp_cool_f - temp_cold_f)
-        temp_eq = max(temp_eq, min(caution_mph, (temp_cool_f - wtmp) / span * caution_mph))
+        water_eq = min(caution_mph, (temp_cool_f - wtmp) / span * caution_mph)
+
+    # Cold air (feels-like): below temp_cold_f it's CAUTION. Between that and
+    # atmp_chilly_f it's only a nudge that stays under the GO line by itself.
+    air_eq = 0.0
     if feels_cold is not None:
         if feels_cold < temp_cold_f:
-            temp_eq = max(temp_eq, min(good_mph, (temp_cold_f - feels_cold) / 15.0 * good_mph))
+            air_eq = good_mph + 0.5
         elif feels_cold < atmp_chilly_f:
             chilly_frac = (atmp_chilly_f - feels_cold) / (atmp_chilly_f - temp_cold_f)
-            temp_eq = max(temp_eq, chilly_frac * good_mph * 0.75)
+            air_eq = chilly_frac * good_mph * 0.6
 
     # Heat-index danger: an open deck offers no shade, so a high heat index is a
     # real hazard — and it must counterbalance the warm-wind relief above, which
@@ -279,8 +281,9 @@ def composite_score(state: dict, cfg: dict) -> float:
 
     result = max(
         wind_eq,
-        wave_eq * 0.75,   # waves: ~3 ft → CAUTION; >4.5 ft → NO-GO
-        temp_eq * 0.80,   # temp: marginal reading alone won't force NO-GO
+        wave_eq * 0.75,   # defaults: 3 ft → CAUTION, >5 ft → NO-GO (sooner in chop)
+        water_eq * 0.80,  # cold water alone never forces NO-GO
+        air_eq,           # feels-like < temp_cold_f → CAUTION
         heat_eq,          # heat index: ≥103°F → CAUTION; ≥125°F → NO-GO
         pres_eq,
         fog_eq,

@@ -1,15 +1,7 @@
 """
-Location definitions and NOAA CO-OPS water-temperature helper.
+NOAA CO-OPS water-temperature lookup, used when the buoy has no WTMP reading.
 
-Each entry in LOCATIONS describes one named spot:
-  ndbc_station  – NDBC buoy or nearshore station ID (primary data source)
-  coops_station – NOAA CO-OPS tide-gauge station ID (water-temp fallback)
-  lat / lon     – decimal degrees (used for Weather.gov alerts endpoint)
-  name          – human-readable display label
-
-CO-OPS water temperature is fetched from the public Tides & Currents API
-(no API key required) and cached in memory for COOPS_CACHE_TTL seconds.
-
+Results are cached in memory for COOPS_CACHE_TTL seconds. No API key needed.
 API docs: https://api.tidesandcurrents.noaa.gov/api/prod/
 """
 
@@ -18,20 +10,7 @@ import json
 import logging
 import time
 
-COOPS_CACHE_TTL = 1800  # seconds (30 min) — CO-OPS readings update hourly
-
-LOCATIONS = {
-    "wrightsville_beach": {
-        "name":          "Wrightsville Beach / ICW",
-        "ndbc_station":  "41038",
-        "coops_station": "8658120",   # Wilmington, NC
-        "lat":           34.2108,
-        "lon":          -77.5986,
-    },
-}
-
-# Active location — change this to switch spots without touching pontoon_meter.py
-ACTIVE_LOCATION = LOCATIONS["wrightsville_beach"]
+COOPS_CACHE_TTL = 1800  # seconds; water temp changes slowly, no need to hit the API every poll
 
 _COOPS_CACHE: dict[str, tuple[float, float | None]] = {}  # station → (timestamp, temp_f)
 

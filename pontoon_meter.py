@@ -1,6 +1,5 @@
 from luma.core.interface.serial import spi
 from luma.lcd.device import ili9341
-import io
 import json
 import logging
 import math
@@ -26,12 +25,9 @@ cfg   = load_config(_args)
 URL        = f"https://www.ndbc.noaa.gov/data/realtime2/{cfg['ndbc_station']}.txt"
 ALERTS_URL = f"https://api.weather.gov/alerts/active?point={cfg['lat']},{cfg['lon']}"
 
-# Convenience aliases used by the web handler
-GOOD_MPH    = cfg["good_mph"]
-CAUTION_MPH = cfg["caution_mph"]
 STALE_MINUTES = cfg["stale_minutes"]
-FRAME_RATE  = cfg["frame_rate"]
-WEB_PORT    = cfg["web_port"]
+FRAME_RATE    = cfg["frame_rate"]
+WEB_PORT      = cfg["web_port"]
 
 try:
     _serial = spi(port=0, device=0, gpio_DC=24, gpio_RST=25)
@@ -49,7 +45,7 @@ _state = {
     "age": None, "wtmp": None, "wvht": None, "atmp": None, "dpd": None,
     "dewp": None,
     "pres": None, "pres_history": [],
-    "gust_history": [],
+    "gust_history": [], "obs_time": None,
     "alerts": [], "error": None,
     "cached": False,   # True when the display is showing disk-cached data
 }
